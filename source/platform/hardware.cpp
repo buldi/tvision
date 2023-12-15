@@ -16,19 +16,21 @@ TEvent THardwareInfo::eventQ[];
 size_t THardwareInfo::eventCount = 0;
 
 static bool alwaysFlush;
+static tvision::Platform *platf;
 
 THardwareInfo::THardwareInfo() noexcept
 {
+    using namespace tvision;
     pendingEvent = 0;
     alwaysFlush = getEnv<int>("TVISION_MAX_FPS", 0) < 0;
+    platf = new Platform();
 }
 
 THardwareInfo::~THardwareInfo()
 {
+    delete platf;
+    platf = nullptr;
 }
-
-// For brevity.
-static constexpr Platform *platf = &Platform::instance;
 
 void THardwareInfo::setCaretSize( ushort size ) noexcept { platf->setCaretSize(size); }
 void THardwareInfo::setCaretPosition( ushort x, ushort y ) noexcept { platf->setCaretPosition(x, y); }
@@ -104,29 +106,28 @@ void THardwareInfo::readEvents() noexcept
             ++eventCount;
 }
 
-void THardwareInfo::waitForEvents( int timeoutMs ) noexcept
+void THardwareInfo::waitForEvent( int timeoutMs ) noexcept
 {
     if (!eventCount)
     {
         // Flush the screen once for every time all events have been processed,
         // only when blocking for events.
         flushScreen();
-        platf->waitForEvents(timeoutMs);
+        platf->waitForEvent(timeoutMs);
     }
 }
 
-void THardwareInfo::stopEventWait() noexcept
+void THardwareInfo::interruptEventWait() noexcept
 {
-    platf->stopEventWait();
+    platf->interruptEventWait();
 }
 
-#ifndef _WIN32
-
-extern "C" DWORD GetTickCount(void) noexcept
+BOOL THardwareInfo::setClipboardText( TStringView text ) noexcept
 {
-    // This effectively gives a system time reference in milliseconds.
-    // steady_clock is best suited for measuring intervals.
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    return platf->setClipboardText(text);
 }
 
-#endif
+BOOL THardwareInfo::requestClipboardText( void (&accept)(TStringView) ) noexcept
+{
+    return platf->requestClipboardText(accept);
+}

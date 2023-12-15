@@ -14,7 +14,9 @@
  *
  */
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
 #endif
@@ -42,13 +44,13 @@ public:
 
     TMenuItem( TStringView aName,
                ushort aCommand,
-               ushort aKeyCode,
+               TKey aKey,
                ushort aHelpCtx = hcNoContext,
                TStringView p = 0,
                TMenuItem *aNext = 0
              ) noexcept;
     TMenuItem( TStringView aName,
-               ushort aKeyCode,
+               TKey aKey,
                TMenu *aSubMenu,
                ushort aHelpCtx = hcNoContext,
                TMenuItem *aNext = 0
@@ -62,7 +64,7 @@ public:
     const char *name;
     ushort command;
     Boolean disabled;
-    ushort keyCode;
+    TKey keyCode;
     ushort helpCtx;
     union
         {
@@ -91,7 +93,7 @@ class TSubMenu : public TMenuItem
 
 public:
 
-    TSubMenu( TStringView nm, ushort key, ushort helpCtx = hcNoContext ) noexcept;
+    TSubMenu( TStringView nm, TKey key, ushort helpCtx = hcNoContext ) noexcept;
 
 };
 
@@ -152,7 +154,7 @@ public:
     virtual ushort getHelpCtx();
     virtual TPalette& getPalette() const;
     virtual void handleEvent( TEvent& event );
-    TMenuItem *hotKey( ushort keyCode );
+    TMenuItem *hotKey( TKey key );
     TMenuView *newSubView( const TRect& bounds,
                            TMenu *aMenu,
                            TMenuView *aParentMenu
@@ -177,7 +179,7 @@ private:
     TMenuView *topMenu();
     Boolean updateMenu( TMenu *menu );
     void do_a_select( TEvent& );
-    TMenuItem *findHotKey( TMenuItem *p, ushort keyCode );
+    TMenuItem *findHotKey( TMenuItem *p, TKey key );
 
 private:
 
@@ -400,7 +402,7 @@ class TStatusItem
 public:
 
     TStatusItem( TStringView aText,
-                 ushort key,
+                 TKey aKey,
                  ushort cmd,
                  TStatusItem *aNext = 0
                 ) noexcept;
@@ -408,17 +410,17 @@ public:
 
     TStatusItem *next;
     char *text;
-    ushort keyCode;
+    TKey keyCode;
     ushort command;
 
 };
 
 inline TStatusItem::TStatusItem( TStringView aText,
-                                 ushort key,
+                                 TKey aKey,
                                  ushort cmd,
                                  TStatusItem *aNext
                                 ) noexcept :
-     next( aNext ), text( newStr(aText) ), keyCode( key ), command( cmd )
+     next( aNext ), text( newStr(aText) ), keyCode( aKey ), command( cmd )
 {
 }
 
@@ -541,8 +543,9 @@ inline opstream& operator << ( opstream& os, TStatusLine* cl )
 
 #endif  // Uses_TStatusLine
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif
-

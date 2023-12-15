@@ -1,13 +1,19 @@
-#ifndef PLATFORM_H
-#define PLATFORM_H
+#ifndef TVISION_PLATFORM_H
+#define TVISION_PLATFORM_H
 
 #define Uses_TPoint
 #define Uses_TColorAttr
 #include <tvision/tv.h>
 #include <internal/stdioctl.h>
-#include <internal/buffdisp.h>
+#include <internal/dispbuff.h>
 #include <internal/events.h>
-#include <atomic>
+#include <internal/mutex.h>
+#include <vector>
+
+struct TEvent;
+
+namespace tvision
+{
 
 class DisplayStrategy
 {
@@ -28,8 +34,6 @@ public:
     virtual bool screenChanged() noexcept { return false; }
 };
 
-struct TEvent;
-
 class InputStrategy : public EventSource
 {
 public:
@@ -40,7 +44,7 @@ public:
     }
 
     virtual ~InputStrategy() {}
-    virtual bool getEvent(TEvent &ev) noexcept { return false; }
+
     virtual int getButtonCount() noexcept { return 0; }
     virtual void cursorOn() noexcept {}
     virtual void cursorOff() noexcept {}
@@ -50,95 +54,44 @@ struct ConsoleStrategy
 {
     DisplayStrategy &display;
     InputStrategy &input;
+    const std::vector<EventSource *> sources;
 
-    ConsoleStrategy(DisplayStrategy &aDisplay, InputStrategy &aInput) noexcept :
+    ConsoleStrategy( DisplayStrategy &aDisplay, InputStrategy &aInput,
+                     std::vector<EventSource *> &&aSources ) noexcept :
         display(aDisplay),
-        input(aInput)
+        input(aInput),
+        sources(std::move(aSources))
     {
     }
 
     virtual ~ConsoleStrategy() {}
+
     virtual bool isAlive() noexcept { return true; }
-    virtual void forEachSource(void *, void (&)(void *, EventSource &)) noexcept {}
-};
-
-using ThreadId = const void *;
-
-struct ThisThread
-{
-    static const void *id() noexcept
-    {
-        static thread_local struct {} idBase;
-        return &idBase;
-    }
-};
-
-#if ATOMIC_POINTER_LOCK_FREE < 2
-#warning The code below assumes that atomic pointers are lock-free, but they are not.
-#endif
-
-template <class T>
-struct SignalThreadSafe
-{
-    T t;
-    std::atomic<ThreadId> lockingThread {nullptr};
-
-    using Self = SignalThreadSafe;
-
-    struct Lock
-    {
-        Self *self;
-        Lock(Self *aSelf) noexcept : self(aSelf)
-        {
-            ThreadId zero = nullptr;
-            // Use a spin lock because regular mutexes are not signal-safe.
-            if (self)
-                while (self->lockingThread.compare_exchange_weak(zero, ThisThread::id()))
-                    ;
-        }
-        ~Lock()
-        {
-            if (self)
-                self->lockingThread = nullptr;
-        }
-    };
-
-    template <class Func>
-    // 'func' takes a 'T &' by parameter.
-    auto lock(Func &&func) noexcept
-    {
-        Lock lk {lockedByThisThread() ? nullptr : this};
-        return func(t);
-    }
-
-    bool lockedByThisThread() const noexcept
-    {
-        return lockingThread == ThisThread::id();
-    }
+    virtual bool setClipboardText(TStringView) noexcept { return false; }
+    virtual bool requestClipboardText(void (&)(TStringView)) noexcept { return false; }
 };
 
 class Platform
 {
-#ifdef _TV_UNIX
-    StdioCtl io;
-#endif
     EventWaiter waiter;
-    BufferedDisplay displayBuf;
+    DisplayBuffer displayBuf;
     DisplayStrategy dummyDisplay;
     InputStrategy dummyInput {(SysHandle) 0};
-    ConsoleStrategy dummyConsole {dummyDisplay, dummyInput};
+    ConsoleStrategy dummyConsole {dummyDisplay, dummyInput, {}};
     // Invariant: 'console' contains either a non-owning reference to 'dummyConsole'
     // or an owning reference to a heap-allocated ConsoleStrategy object.
-    SignalThreadSafe<ConsoleStrategy *> console {&dummyConsole};
+    SignalSafeReentrantMutex<ConsoleStrategy *> console {&dummyConsole};
 
-    Platform() noexcept;
-    ~Platform();
+    static Platform *instance;
 
+    void setUpConsole(ConsoleStrategy *&) noexcept;
+    void restoreConsole(ConsoleStrategy *&) noexcept;
     void checkConsole() noexcept;
     bool sizeChanged(TEvent &ev) noexcept;
     ConsoleStrategy &createConsole() noexcept;
 
-    static int errorCharWidth(uint32_t) noexcept;
+    static int initAndGetCharWidth(uint32_t) noexcept;
+    static void initEncodingStuff() noexcept;
     static void signalCallback(bool) noexcept;
 
     bool screenChanged() noexcept
@@ -146,15 +99,21 @@ class Platform
 
 public:
 
-    static Platform instance;
     static int (*charWidth)(uint32_t) noexcept;
 
-    void setUpConsole() noexcept;
-    void restoreConsole() noexcept;
+    // Platform is a singleton. It gets created and destroyed by THardwareInfo.
+    Platform() noexcept;
+    ~Platform();
+
+    // Note: explicit 'this' required by GCC 5.
+    void setUpConsole() noexcept
+        { console.lock([&] (auto *&c) { this->setUpConsole(c); }); }
+    void restoreConsole() noexcept
+        { console.lock([&] (auto *&c) { this->restoreConsole(c); }); }
 
     bool getEvent(TEvent &ev) noexcept;
-    void waitForEvents(int ms) noexcept { checkConsole(); waiter.waitForEvents(ms); }
-    void stopEventWait() noexcept { waiter.stopEventWait(); }
+    void waitForEvent(int ms) noexcept { checkConsole(); waiter.waitForEvent(ms); }
+    void interruptEventWait() noexcept { waiter.interruptEventWait(); }
 
     int getButtonCount() noexcept
         { return console.lock([] (auto *c) { return c->input.getButtonCount(); }); }
@@ -180,6 +139,13 @@ public:
         { console.lock([&] (auto *c) { displayBuf.flushScreen(c->display); }); }
     TScreenCell *reloadScreenInfo() noexcept
         { return console.lock([&] (auto *c) { return displayBuf.reloadScreenInfo(c->display); }); }
+
+    bool setClipboardText(TStringView text) noexcept
+        { return console.lock([&] (auto *c) { return c->setClipboardText(text); }); }
+    bool requestClipboardText(void (&accept)(TStringView)) noexcept
+        { return console.lock([&] (auto *c) { return c->requestClipboardText(accept); }); }
 };
 
-#endif // PLATFORM_H
+} // namespace tvision
+
+#endif // TVISION_PLATFORM_H

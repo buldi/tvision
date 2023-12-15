@@ -13,7 +13,9 @@
  *
  */
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
 #endif
@@ -24,7 +26,7 @@
 #if defined( __FLAT__ )
 
 #if !defined( __WINDOWS_H )
-#include <tvision/compat/win.h>
+#include <tvision/compat/windows/windows.h>
 #endif
 
 #else
@@ -34,10 +36,6 @@
     ((long)(((unsigned)(l)) | (((long)((unsigned)(h))) << 16)))
 #endif
 
-#endif
-
-#ifndef __BORLANDC__
-class PlatformStrategy;
 #endif
 
 struct TEvent;
@@ -50,16 +48,8 @@ public:
 
     THardwareInfo() noexcept;
     ~THardwareInfo();
-#ifndef __BORLANDC__
-    enum { eventQSize = 24 };
-    static TEvent eventQ[eventQSize];
-    static size_t eventCount;
-    static void flushScreen() noexcept;
-    static BOOL getPendingEvent(TEvent &event, Boolean mouse) noexcept;
-    static void readEvents() noexcept;
-#endif
 
-    static ulong getTickCount() noexcept;
+    static uint32_t getTickCount() noexcept;
 
 #if defined( __FLAT__ )
 
@@ -82,6 +72,7 @@ public:
     static ushort getScreenMode() noexcept;
     static void setScreenMode( ushort mode ) noexcept;
     static void clearScreen( ushort w, ushort h ) noexcept;
+    static void flushScreen() noexcept;
     static void screenWrite( ushort x, ushort y, TScreenCell *buf, DWORD len ) noexcept;
     static TScreenCell *allocateScreenBuffer() noexcept;
     static void freeScreenBuffer( TScreenCell *buffer ) noexcept;
@@ -99,8 +90,10 @@ public:
     static BOOL getMouseEvent( MouseEventType& event ) noexcept;
     static BOOL getKeyEvent( TEvent& event ) noexcept;
     static void clearPendingEvent() noexcept;
-    static void waitForEvents( int timeoutMs ) noexcept;
-    static void stopEventWait() noexcept;
+    static void waitForEvent( int timeoutMs ) noexcept;
+    static void interruptEventWait() noexcept;
+    static BOOL setClipboardText( TStringView text ) noexcept;
+    static BOOL requestClipboardText( void (&accept)( TStringView ) ) noexcept;
 
 // System functions.
 
@@ -124,7 +117,14 @@ private:
     static INPUT_RECORD irBuffer;
     static CONSOLE_CURSOR_INFO crInfo;
     static CONSOLE_SCREEN_BUFFER_INFO sbInfo;
-    static int eventTimeoutMs;
+
+#ifndef __BORLANDC__
+    enum { eventQSize = 24 };
+    static TEvent eventQ[eventQSize];
+    static size_t eventCount;
+    static BOOL getPendingEvent(TEvent &event, Boolean mouse) noexcept;
+    static void readEvents() noexcept;
+#endif
 
 #else
 
@@ -186,6 +186,7 @@ inline ushort THardwareInfo::getScreenCols() noexcept
 }
 
 #pragma option -w-inl
+
 inline void THardwareInfo::clearScreen( ushort w, ushort h ) noexcept
 {
     COORD coord = { 0, 0 };
@@ -194,7 +195,12 @@ inline void THardwareInfo::clearScreen( ushort w, ushort h ) noexcept
     FillConsoleOutputAttribute( consoleHandle[cnOutput], 0x07, w*h, coord, &read );
     FillConsoleOutputCharacterA( consoleHandle[cnOutput], ' ', w*h, coord, &read );
 }
+
 #pragma option -w+inl
+
+inline void THardwareInfo::flushScreen() noexcept
+{
+}
 
 inline TScreenCell *THardwareInfo::allocateScreenBuffer() noexcept
 {
@@ -275,8 +281,8 @@ inline ushort *THardwareInfo::getColorAddr( ushort offset )
 inline ushort *THardwareInfo::getMonoAddr( ushort offset )
     { return (ushort *) MAKELONG( monoSel, offset ); }
 
-inline ulong THardwareInfo::getTickCount()
-    { return *(ulong *) MAKELONG( biosSel, 0x6C ); }
+inline uint32_t THardwareInfo::getTickCount()
+    { return *(uint32_t *) MAKELONG( biosSel, 0x6C ); }
 
 inline uchar THardwareInfo::getShiftState()
     { return *(uchar *) MAKELONG( biosSel, 0x17 ); }
@@ -304,7 +310,9 @@ inline Boolean THardwareInfo::getDPMIFlag()
 
 #endif  // __THardwareInfo
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif

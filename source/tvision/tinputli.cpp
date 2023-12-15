@@ -21,6 +21,7 @@
 #define Uses_opstream
 #define Uses_ipstream
 #define Uses_TText
+#define Uses_TClipboard
 #include <tvision/tv.h>
 
 #if !defined( __CTYPE_H )
@@ -71,9 +72,9 @@ static int nextWord(TStringView s, int pos) noexcept
 
 TInputLine::TInputLine( const TRect& bounds, uint limit, TValidator *aValid, ushort limitMode ) noexcept :
     TView(bounds),
-    maxLen      ( (limitMode == ilMaxBytes) ? min(max(limit-1, 0), 255) : 255 ),
-    maxWidth    ( (limitMode == ilMaxWidth) ? limit : UINT_MAX ),
-    maxGraphemes( (limitMode == ilMaxGraphemes) ? limit : UINT_MAX ),
+    maxLen  ( (limitMode == ilMaxBytes) ? min(max(limit-1, 0), 255) : 255 ),
+    maxWidth( (limitMode == ilMaxWidth) ? limit : UINT_MAX ),
+    maxChars( (limitMode == ilMaxChars) ? limit : UINT_MAX ),
     curPos( 0 ),
     firstPos( 0 ),
     selStart( 0 ),
@@ -280,12 +281,13 @@ void TInputLine::handleEvent( TEvent& event )
 {
     Boolean extendBlock;
     /* Home, Left Arrow, Right Arrow, End, Ctrl-Left Arrow, Ctrl-Right Arrow */
-    static const char padKeys[] = {0x47,0x4b,0x4d,0x4f,0x73,0x74, 0};
+    static const char padKeys[] = {0x47,0x4b,0x4d,0x4f,0x73,0x74};
     TView::handleEvent(event);
 
     char keyText[ sizeof( event.keyDown.text )+1 ];
     int delta, i, len, curWidth;
     if( (state & sfSelected) != 0 )
+        {
         switch( event.what )
             {
             case evMouseDown:
@@ -320,8 +322,7 @@ void TInputLine::handleEvent( TEvent& event )
             case evKeyDown:
                 saveState();
                 event.keyDown.keyCode = ctrlToArrow(event.keyDown.keyCode);
-                if( event.keyDown.keyCode != 0 &&
-                    strchr(padKeys, event.keyDown.charScan.scanCode) &&
+                if( memchr(padKeys, event.keyDown.charScan.scanCode, sizeof(padKeys)) != 0 &&
                     (event.keyDown.controlKeyState & kbShift) != 0
                   )
                     {
@@ -398,7 +399,7 @@ void TInputLine::handleEvent( TEvent& event )
                         // The event text may contain null characters, but 'data' is null-terminated,
                         // so rely on strlen to measure the text length.
                         strnzcpy( keyText, event.keyDown.getText(), sizeof( keyText ) );
-                        if( (len = strlen(keyText)) != 0 )
+                        if( (len = strlen(keyText)) > 0 )
                             {
                             deleteSelect();
                             if( (state & sfCursorIns) != 0 )
@@ -406,11 +407,13 @@ void TInputLine::handleEvent( TEvent& event )
 
                             if( checkValid(True) )
                                 {
+                                if( strchr("\t\r\n", keyText[0]) != 0 )
+                                    keyText[0] = ' '; // Replace tabs and newlines into spaces.
                                 TTextMetrics dataMts = TText::measure(data);
                                 TTextMetrics keyMts = TText::measure(keyText);
                                 if( strlen(data) + len <= maxLen &&
                                     dataMts.width + keyMts.width <= maxWidth &&
-                                    dataMts.graphemeCount + keyMts.graphemeCount <= maxGraphemes
+                                    dataMts.graphemeCount + keyMts.graphemeCount <= maxChars
                                   )
                                     {
                                     if( firstPos > curPos )
@@ -427,16 +430,13 @@ void TInputLine::handleEvent( TEvent& event )
                             *data = EOS;
                             curPos = 0;
                             }
-                            else
-                                return;
+                        else
+                            return;
                     }
                 if (extendBlock)
                     adjustSelectBlock();
                 else
-                    {
-                    selStart = 0;
-                    selEnd = 0;
-                    }
+                    selStart = selEnd = 0;
                 curWidth = displayedPos(curPos);
                 if( firstPos > curWidth )
                     firstPos = curWidth;
@@ -446,7 +446,31 @@ void TInputLine::handleEvent( TEvent& event )
                 drawView();
                 clearEvent( event );
                 break;
+            case evCommand:
+                if( event.message.command == cmPaste )
+                    {
+                    TClipboard::requestText();
+                    clearEvent( event );
+                    }
+                else if( event.message.command == cmCut || event.message.command == cmCopy )
+                    {
+                    TStringView sel( data + selStart, selEnd - selStart );
+                    TClipboard::setText(sel);
+                    if( event.message.command == cmCut )
+                        {
+                        saveState();
+                        deleteSelect();
+                        checkValid(True);
+                        selStart = selEnd = 0;
+                        drawView();
+                        }
+                    clearEvent( event );
+                    }
+                break;
             }
+        if( canUpdateCommands() )
+            updateCommands();
+        }
 }
 
 void TInputLine::selectAll( Boolean enable, Boolean scroll )
@@ -459,6 +483,8 @@ void TInputLine::selectAll( Boolean enable, Boolean scroll )
     if( scroll )
         firstPos = max( 0, displayedPos(curPos)-size.x+2 );
     drawView();
+    if( canUpdateCommands() )
+        updateCommands();
 }
 
 void TInputLine::setData( void *rec )
@@ -473,11 +499,14 @@ void TInputLine::setData( void *rec )
 
 void TInputLine::setState( ushort aState, Boolean enable )
 {
+    Boolean updateBefore = canUpdateCommands();
     TView::setState( aState, enable );
-    if( aState == sfSelected ||
-        ( aState == sfActive && (state & sfSelected) != 0 )
-      )
+    Boolean updateAfter = canUpdateCommands();
+
+    if( aState == sfSelected || (aState == sfActive && (state & sfSelected)) )
         selectAll( enable, False );
+    if( updateBefore != updateAfter )
+        updateCommands();
 }
 
 void TInputLine::setValidator( TValidator* aValid )
@@ -488,12 +517,34 @@ void TInputLine::setValidator( TValidator* aValid )
     validator = aValid;
 }
 
+Boolean TInputLine::canUpdateCommands()
+{
+    return Boolean( (~state & (sfActive | sfSelected)) == 0 );
+}
+
+void TInputLine::setCmdState( ushort command, Boolean enable )
+{
+    TCommandSet s;
+    s += command;
+    if( enable && canUpdateCommands() )
+        enableCommands(s);
+    else
+        disableCommands(s);
+}
+
+void TInputLine::updateCommands()
+{
+    setCmdState( cmCut, Boolean( selStart < selEnd ) );
+    setCmdState( cmCopy, Boolean( selStart < selEnd ) );
+    setCmdState( cmPaste, True );
+}
+
 #if !defined(NO_STREAMABLE)
 
 void TInputLine::write( opstream& os )
 {
     TView::write( os );
-    os << maxLen << curPos << firstPos
+    os << maxLen << maxWidth << maxChars << curPos << firstPos
        << selStart << selEnd;
     os.writeString( data);
     os << validator;
@@ -502,7 +553,7 @@ void TInputLine::write( opstream& os )
 void *TInputLine::read( ipstream& is )
 {
     TView::read( is );
-    is >> maxLen >> curPos >> firstPos
+    is >> maxLen >> maxWidth >> maxChars >> curPos >> firstPos
        >> selStart >> selEnd;
     data = new char[maxLen + 1];
     oldData = new char[maxLen + 1];

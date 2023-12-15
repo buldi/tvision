@@ -30,7 +30,7 @@
 #include <string.h>
 #include <stdio.h>
 
-static inline Boolean uppercase(char c)
+static inline char uppercase(char c)
 {
     return (('a' <= c) && (c <= 'z')) ? c + 'A'-'a' : c;
 }
@@ -140,7 +140,7 @@ void* TPXPictureValidator::read( ipstream& is )
 
 TPXPictureValidator::~TPXPictureValidator()
 {
-  delete pic;
+  delete[] pic;
 }
 
 void TPXPictureValidator::error()
@@ -618,7 +618,7 @@ TFilterValidator::TFilterValidator( StreamableInit s) noexcept : TValidator(s)
 
 TFilterValidator::~TFilterValidator()
 {
-    delete validChars;
+    delete[] validChars;
 }
 
 #if !defined(NO_STREAMABLE)
@@ -655,7 +655,7 @@ void TFilterValidator::error()
 
 // TRangeValidator
 
-TRangeValidator::TRangeValidator( long aMin, long aMax ) noexcept :
+TRangeValidator::TRangeValidator( int32_t aMin, int32_t aMax ) noexcept :
     TFilterValidator( 0 ),
     min(aMin),
     max(aMax)

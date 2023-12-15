@@ -1,91 +1,77 @@
 #ifdef __linux__
 
+#define Uses_TEvent
+#define Uses_TKeys
+#include <tvision/tv.h>
+
 #include <internal/linuxcon.h>
-#include <internal/constmap.h>
 #include <internal/stdioctl.h>
 #include <internal/gpminput.h>
+#include <internal/terminal.h>
+#include <internal/sigwinch.h>
 #include <linux/keyboard.h>
 #include <linux/vt.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <cstring>
+#include <string.h>
 
-/* There are cases, such as the linux console, where it is possible to
- * get the state of keyboard modifiers (Shift/Ctrl/Alt), but captured
- * key events don't include that information. So, an extra translation
- * step must be done to get the actual Turbo Vision key codes. */
+namespace tvision
+{
 
-static constexpr auto keyCodeWithShift = constexpr_map<ushort, ushort>::from_array({
-    { kbTab,        kbShiftTab      },
-    { kbDel,        kbShiftDel      },
-    { kbIns,        kbShiftIns      }
-});
+inline LinuxConsoleStrategy::LinuxConsoleStrategy( DisplayStrategy &aDisplay,
+                                                   LinuxConsoleInput &aWrapper,
+                                                   InputState &aInputState,
+                                                   SigwinchHandler *aSigwinch,
+                                                   GpmInput *aGpm ) noexcept :
+    ConsoleStrategy( aDisplay,
+                     aGpm ? *aGpm : aWrapper.input,
+                     {&aWrapper, aGpm, aSigwinch} ),
+    inputState(aInputState),
+    sigwinch(aSigwinch),
+    wrapper(aWrapper),
+    gpm(aGpm)
+{
+}
 
-static constexpr auto keyCodeWithCtrl = constexpr_map<ushort, ushort>::from_array({
-    { 0x001F,       kbCtrlBack      },
-    { kbDel,        kbCtrlDel       },
-    { kbEnd,        kbCtrlEnd       },
-    { kbHome,       kbCtrlHome      },
-    { kbIns,        kbCtrlIns       },
-    { kbLeft,       kbCtrlLeft      },
-    { kbPgDn,       kbCtrlPgDn      },
-    { kbPgUp,       kbCtrlPgUp      },
-    { kbRight,      kbCtrlRight     },
-    { kbUp,         kbCtrlUp        },
-    { kbDown,       kbCtrlDown      }
-});
-
-static constexpr auto keyCodeWithAlt = constexpr_map<ushort, ushort>::from_array({
-    { kbBack,       kbAltBack       },
-    { kbDel,        kbAltDel        },
-    { kbEnd,        kbAltEnd        },
-    { kbHome,       kbAltHome       },
-    { kbIns,        kbAltIns        },
-    { kbPgDn,       kbAltPgDn       },
-    { kbPgUp,       kbAltPgUp       },
-    { kbUp,         kbAltUp         },
-    { kbDown,       kbAltDown       },
-    { kbLeft,       kbAltLeft       },
-    { kbRight,      kbAltRight      },
-});
-
-LinuxConsoleStrategy &LinuxConsoleStrategy::create( const StdioCtl &io, ScreenLifetime &scrl,
+LinuxConsoleStrategy &LinuxConsoleStrategy::create( StdioCtl &io,
+                                                    InputState &inputState,
                                                     DisplayStrategy &display,
                                                     InputStrategy &input ) noexcept
 {
-    return *new LinuxConsoleStrategy(io, scrl, display, input, GpmInput::create());
+    auto *sigwinch = SigwinchHandler::create();
+    auto &wrapper = *new LinuxConsoleInput(io, input);
+    auto *gpm = GpmInput::create();
+    return *new LinuxConsoleStrategy(display, wrapper, inputState, sigwinch, gpm);
 }
 
 LinuxConsoleStrategy::~LinuxConsoleStrategy()
 {
-    // The superclass always deletes 'input'. If we have a different object
-    // in 'wrapper.input', we delete it too.
-    if (&wrapper.input != &input)
-        delete &wrapper.input;
-}
-
-void LinuxConsoleStrategy::forEachSource(void *args, void (&action)(void *, EventSource &)) noexcept
-{
-    action(args, wrapper);
-    if (&wrapper.input != &input)
-        action(args, input);
-    UnixConsoleStrategy::forEachPrivateSource(args, action);
+    delete sigwinch;
+    delete gpm;
+    delete &wrapper.input;
+    delete &wrapper;
+    delete &display;
+    delete &inputState;
 }
 
 bool LinuxConsoleInput::getEvent(TEvent &ev) noexcept
 {
-    /* The keyboard event getter is usually unaware of key modifiers in the
-     * console, so we add them on top of the previous translation. */
+    // The keyboard event getter is usually unaware of key modifiers in the
+    // console, so we add them on top of the previous translation.
     if (input.getEvent(ev))
     {
-        applyKeyboardModifiers(io, ev.keyDown);
-        ushort keyCode = keyCodeWithModifiers(ev.keyDown.controlKeyState, ev.keyDown.keyCode);
-        if (keyCode)
-            ev.keyDown.keyCode = keyCode;
-        // Do not set the Ctrl flag on these, as that would alter their meaning.
-        // Note that there already exist kbCtrlBack and kbCtrlEnter.
-        else if (ev.keyDown.keyCode == kbBack || ev.keyDown.keyCode == kbTab || ev.keyDown.keyCode == kbEnter)
+        auto &keyCode = ev.keyDown.keyCode;
+        ev.keyDown.controlKeyState = getKeyboardModifiers(io);
+        // Prevent Ctrl+H/Ctrl+I/Ctrl+J/Ctrl+M from being interpreted as
+        // Ctrl+Back/Ctrl+Tab/Ctrl+Enter.
+        if (keyCode == kbBack || keyCode == kbTab || keyCode == kbEnter)
             ev.keyDown.controlKeyState &= ~kbCtrlShift;
+        // Special cases for Ctrl+Back and Shift+Tab.
+        if (keyCode == 0x001F && (ev.keyDown.controlKeyState & kbCtrlShift))
+            keyCode = kbCtrlBack;
+        else if (keyCode == kbAltTab && ((ev.keyDown.controlKeyState & (kbShift | kbCtrlShift | kbAltShift)) == kbShift))
+            keyCode = kbShiftTab;
+        TermIO::normalizeKey(ev.keyDown);
         return true;
     }
     return false;
@@ -96,35 +82,22 @@ bool LinuxConsoleInput::hasPendingEvents() noexcept
     return input.hasPendingEvents();
 }
 
-ushort LinuxConsoleInput::keyCodeWithModifiers(ulong controlKeyState, ushort keyCode) noexcept
-{
-    ushort result = 0;
-    if ((controlKeyState & kbAltShift) && (result = keyCodeWithAlt[keyCode]))
-        return result;
-    if ((controlKeyState & kbCtrlShift) && (result = keyCodeWithCtrl[keyCode]))
-        return result;
-    if ((controlKeyState & kbShift) && (result = keyCodeWithShift[keyCode]))
-        return result;
-    return result;
-}
-
-void LinuxConsoleInput::applyKeyboardModifiers(const StdioCtl &io, KeyDownEvent &key) noexcept
+ushort LinuxConsoleInput::getKeyboardModifiers(StdioCtl &io) noexcept
 {
     char res = 6;
     ulong actualModifiers = 0;
     if (ioctl(io.in(), TIOCLINUX, &res) != -1)
     {
-        if ((res & (1 << KG_SHIFT)) && !key.textLength)
+        if (res & (1 << KG_SHIFT))
             actualModifiers |= kbShift;
         if (res & (1 << KG_CTRL))
-            actualModifiers |= kbCtrlShift;
+            actualModifiers |= kbLeftCtrl;
         if (res & (1 << KG_ALT))
-            actualModifiers |= kbAltShift;
-        /* Modifiers must be replaced and not OR'd. For instance, Shift+Tab is
-         * captured as Alt+Tab by ncurses, and discarding the current Alt flag
-         * makes it possible for it to be processed properly by Turbo Vision. */
-        key.controlKeyState = actualModifiers;
+            actualModifiers |= kbLeftAlt;
     }
+    return actualModifiers;
 }
+
+} // namespace tvision
 
 #endif // __linux__

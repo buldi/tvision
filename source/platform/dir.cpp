@@ -13,6 +13,7 @@
 unsigned _dos_findfirst( const char *pathname, unsigned attrib,
                          struct find_t *fileinfo ) noexcept
 {
+    using namespace tvision;
     // The original findfirst sets errno on failure. We don't do this for now.
     FindFirstRec *r;
     if ((r = FindFirstRec::allocate(fileinfo, attrib, pathname)))
@@ -22,6 +23,7 @@ unsigned _dos_findfirst( const char *pathname, unsigned attrib,
 
 unsigned _dos_findnext(struct find_t *fileinfo) noexcept
 {
+    using namespace tvision;
     FindFirstRec *r;
     if ((r = FindFirstRec::get(fileinfo)) && r->next())
         return 0;
@@ -38,36 +40,50 @@ int findnext(struct ffblk *ffblk) noexcept
     return _dos_findnext((struct find_t *) ffblk);
 }
 
+static size_t movestr(char *dest, TStringView src, size_t size) noexcept
+{
+    if (size)
+    {
+        size_t copy_bytes = src.size();
+        if (copy_bytes > size - 1)
+            copy_bytes = size - 1;
+        memmove(dest, src.data(), copy_bytes);
+        dest[copy_bytes] = '\0';
+        return copy_bytes;
+    }
+    return 0;
+}
+
 void fnmerge( char *pathP, const char *driveP, const char *dirP,
               const char *nameP, const char *extP ) noexcept
 {
-    // fnmerge is often used before accessing files, so producing a
-    // UNIX-formatted path fixes most cases of filesystem access.
-    memset(pathP, 0, MAXPATH);
+    using namespace tvision;
     size_t n = 0;
 #ifdef _WIN32
     if (driveP && *driveP)
     {
-        n += strnzcpy(&pathP[n], driveP, MAXPATH - n);
+        n += movestr(&pathP[n], driveP, MAXPATH - n);
         if (pathP[n-1] != ':')
-            n += strnzcpy(&pathP[n], ":", MAXPATH - n);
+            n += movestr(&pathP[n], ":", MAXPATH - n);
     }
 #endif
     if (dirP && *dirP)
     {
-        n += strnzcpy(&pathP[n], dirP, MAXPATH - n);
+        n += movestr(&pathP[n], dirP, MAXPATH - n);
         if (pathP[n-1] != '\\' && pathP[n-1] != '/')
-            n += strnzcpy(&pathP[n], "\\", MAXPATH - n);
+            n += movestr(&pathP[n], "\\", MAXPATH - n);
     }
     if (nameP && *nameP)
-        n += strnzcpy(&pathP[n], nameP, MAXPATH - n);
+        n += movestr(&pathP[n], nameP, MAXPATH - n);
     if (extP && *extP)
     {
         if (*extP != '.')
-            n += strnzcpy(&pathP[n], ".", MAXPATH - n);
-        n += strnzcpy(&pathP[n], extP, MAXPATH - n);
+            n += movestr(&pathP[n], ".", MAXPATH - n);
+        n += movestr(&pathP[n], extP, MAXPATH - n);
     }
 #ifdef _TV_UNIX
+    // fnmerge is often used before accessing files, so producing a
+    // UNIX-formatted path fixes most cases of filesystem access.
     path_dos2unix(pathP);
 #endif
 }
@@ -80,7 +96,7 @@ static bool CopyComponent(char* dstP, const char* startP, const char* endP, size
     {
         if (dstP)
             // This always adds a trailing '\0', thus the +1.
-            strnzcpy(dstP, startP, std::min<size_t>(MAX, endP-startP+1));
+            strnzcpy(dstP, startP, min<size_t>(MAX, endP-startP+1));
         return true;
     }
     return false;
@@ -177,20 +193,29 @@ int getcurdir(int drive, char *direc) noexcept
     // direc is an array of length MAXDIR where the null-terminated directory
     // name will be placed, without drive specification nor leading backslash.
     // Note that drive 0 is the 'default' drive, 1 is drive A, etc.
-    if (drive == 0 || drive-1 == getdisk())
-    {
+    using namespace tvision;
 #ifdef _WIN32
-        constexpr int lead = 3;
+    enum { prefix = 3 }; // Drive + slash
+    enum { bufLen = MAXDIR + prefix };
+    wchar_t buf[bufLen];
+    wchar_t drv[3] = {wchar_t((drive ? drive - 1 : getdisk()) + 'A'), ':', '\0'};
+
+    if ( GetFullPathNameW(drv, bufLen, buf, nullptr) <= bufLen
+         && WideCharToMultiByte(CP_UTF8, 0, buf + prefix, -1, direc, MAXDIR, nullptr, nullptr) )
+        return 0;
+    return -1;
 #else
-        constexpr int lead = 1;
-#endif
-        char buf[MAXDIR+lead];
-        if (getcwd(buf, MAXDIR+lead))
+    enum { prefix = 1 }; // Root slash
+    if (drive == 0 || drive - 1 == getdisk())
+    {
+        char buf[MAXDIR + prefix];
+        if (getcwd(buf, MAXDIR + prefix))
         {
             path_unix2dos(buf);
-            strnzcpy(direc, buf+lead, MAXDIR);
+            strnzcpy(direc, buf + prefix, MAXDIR);
             return 0;
         }
     }
     return -1;
+#endif
 }

@@ -13,6 +13,9 @@
 #include <memory>
 #include <gpm.h>
 
+namespace tvision
+{
+
 GpmInput *GpmInput::create() noexcept
 {
     // Let coordinates begin at zero instead of one.
@@ -24,9 +27,9 @@ GpmInput *GpmInput::create() noexcept
          * In such case, GPM text selection and copy/paste will be active. */
         .minMod = 0,
         .maxMod = 0 };
-    // Workaround: because we only instantiate GPM in the Linux console, discard
-    // the TERM variable during Gpm_Open so that GPM won't assume it is being
-    // ran under xterm (e.g. if TERM=xterm).
+    // Because we only instantiate GPM in the Linux console, discard the
+    // TERM variable during Gpm_Open so that GPM won't assume it is being
+    // ran under xterm (e.g. if TERM=xterm), and 'gpm_fd' won't be -2.
     {
         std::unique_ptr<char[]> term {newStr(getenv("TERM"))};
         if (term) unsetenv("TERM");
@@ -46,18 +49,12 @@ GpmInput::GpmInput() noexcept :
 
 GpmInput::~GpmInput()
 {
-    /* gpm_fd is -1 if the connection failed or -2 if it's just translating
-     * xterm events. It's greater or equal than 0 if a direct connection
-     * succeeded. */
-    if (gpm_fd != -1)
-    {
-        Gpm_Close();
-    }
+    Gpm_Close();
 }
 
 int GpmInput::getButtonCount() noexcept
 {
-    return gpm_fd < 0 ? 0 : 2;
+    return 2;
 }
 
 void GpmInput::fitEvent(Gpm_Event &gpmEvent) noexcept
@@ -67,16 +64,7 @@ void GpmInput::fitEvent(Gpm_Event &gpmEvent) noexcept
     y = std::min<short>(std::max<short>(y, 0), TScreen::screenHeight - 1);
 }
 
-struct GpmMbFlag
-{
-    using gpm_flag_t = decltype(GPM_B_LEFT);
-    using mb_flag_t = decltype(mbLeftButton);
-
-    gpm_flag_t gpm;
-    mb_flag_t mb;
-};
-
-static constexpr GpmMbFlag gpmButtonFlags[] =
+static constexpr struct { uchar gpm, mb; } gpmButtonFlags[] =
 {
     {GPM_B_LEFT, mbLeftButton},
     {GPM_B_RIGHT, mbRightButton},
@@ -91,30 +79,30 @@ bool GpmInput::getEvent(TEvent &ev) noexcept
         fitEvent(gpmEvent);
         cursor.setPos({gpmEvent.x, gpmEvent.y});
         cursor.show();
-        if (gpmEvent.type != GPM_MOVE || gpmEvent.dx || gpmEvent.dy || gpmEvent.wdy)
-        {
-            ev.what = evMouse;
-            ev.mouse.where.x = gpmEvent.x;
-            ev.mouse.where.y = gpmEvent.y;
-            for (const auto& flag : gpmButtonFlags)
-                if (gpmEvent.buttons & flag.gpm)
-                {
-                    if (gpmEvent.type & GPM_DOWN)
-                        buttonState |= flag.mb;
-                    if (gpmEvent.type & GPM_UP)
-                        buttonState &= ~flag.mb;
-                }
-            ev.mouse.buttons = buttonState;
-            if (gpmEvent.wdy)
-                ev.mouse.wheel = gpmEvent.wdy > 0 ? mwUp : mwDown;
-            else if (gpmEvent.wdx)
-                ev.mouse.wheel = gpmEvent.wdx > 0 ? mwRight : mwLeft;
-            else
-                ev.mouse.wheel = 0;
-            return true;
-        }
+
+        ev.what = evMouse;
+        ev.mouse.where.x = gpmEvent.x;
+        ev.mouse.where.y = gpmEvent.y;
+        for (const auto &flag : gpmButtonFlags)
+            if (gpmEvent.buttons & flag.gpm)
+            {
+                if (gpmEvent.type & GPM_DOWN)
+                    buttonState |= flag.mb;
+                if (gpmEvent.type & GPM_UP)
+                    buttonState &= ~flag.mb;
+            }
+        ev.mouse.buttons = buttonState;
+        if (gpmEvent.wdy)
+            ev.mouse.wheel = gpmEvent.wdy > 0 ? mwUp : mwDown;
+        else if (gpmEvent.wdx)
+            ev.mouse.wheel = gpmEvent.wdx > 0 ? mwRight : mwLeft;
+        else
+            ev.mouse.wheel = 0;
+        return true;
     }
     return false;
 }
+
+} // namespace tvision
 
 #endif // HAVE_GPM

@@ -6,7 +6,7 @@
 # * TV_USE_STATIC_RTL (default OFF) to link against the static version of the
 #   runtime library (MSVC only).
 # * TV_REDUCE_APP_SIZE (default OFF) to reduce executable size by asking the
-#   linker to strip out unused funcions and data. This affects the library's PUBLIC
+#   linker to strip out unused functions and data. This affects the library's PUBLIC
 #   linker flags.
 # * TV_OPTIMIZE_BUILD (default ON) to build with Precompiled Headers (CMake 3.16
 #   or newer).
@@ -14,6 +14,7 @@
 #   (CMake 3.16 or newer), at the cost of possibly increasing its size.
 # * TV_BUILD_AVSCOLOR (default OFF) to build an AviSynth plugin for testing the
 #   terminal color quantization (Unix only).
+# * TV_BUILD_TESTS (default OFF) to build and run tests.
 
 cmake_minimum_required (VERSION 3.5)
 if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.13.0")
@@ -81,9 +82,14 @@ endfunction()
 function(tv_add_private_includes target)
     target_include_directories(${target} PRIVATE
         "${PROJECT_SOURCE_DIR}/include/tvision"
-        "${PROJECT_SOURCE_DIR}/include/tvision/compat"
+        "${PROJECT_SOURCE_DIR}/include/tvision/compat/borland"
     )
-    if (NOT WIN32 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    if (NOT WIN32)
+        target_include_directories(${target} PRIVATE
+            "${PROJECT_SOURCE_DIR}/include/tvision/compat/windows"
+        )
+    endif()
+    if (NOT WIN32 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
         target_include_directories(${target} PRIVATE
             "${PROJECT_SOURCE_DIR}/include/tvision/compat/malloc"
         )
@@ -93,6 +99,7 @@ endfunction()
 function(tv_set_warnings target)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         target_compile_options(${target} PRIVATE
+            /wd4068 # Unrecognized pragmas
             /wd4146 # Unsigned despite minus sign
             /wd4166 # Illegal calling convention for constructor/destructor
             /wd4244 # Possible data loss in type conversion
@@ -103,11 +110,8 @@ function(tv_set_warnings target)
         target_compile_options(${target} PRIVATE
             -Wall
             -Wno-deprecated
-        )
-    endif()
-    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        target_compile_options(${target} PRIVATE
-            -Wno-overloaded-virtual
+            -Wno-unknown-pragmas
+            -Wno-pragmas
         )
     endif()
 endfunction()
@@ -129,7 +133,7 @@ elseif (TV_USE_STATIC_RTL)
     set(TV_USE_STATIC_RTL OFF)
 endif()
 
-option(TV_REDUCE_APP_SIZE "Strip out unused funcions and data from executables" OFF)
+option(TV_REDUCE_APP_SIZE "Strip out unused functions and data from executables" OFF)
 if ((CMAKE_VERSION VERSION_LESS "3.13.0") AND TV_REDUCE_APP_SIZE)
     tv_message(WARNING "'TV_REDUCE_APP_SIZE' requested but only available in CMake 3.13.0 or newer.")
     set(TV_REDUCE_APP_SIZE OFF)
@@ -154,6 +158,8 @@ if (MAY_USE_STATIC_RTL)
     tv_message_mp(STATUS "Link w/static RTL: ${TV_USE_STATIC_RTL}")
 endif()
 
+option(TV_BUILD_TESTS "Build and run tests" OFF)
+
 # Library
 
 add_subdirectory(source)
@@ -161,3 +167,7 @@ add_subdirectory(source)
 # Examples
 
 add_subdirectory(examples)
+
+# Test
+
+add_subdirectory(test)

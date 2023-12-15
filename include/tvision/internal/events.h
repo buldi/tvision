@@ -8,9 +8,17 @@
 #include <vector>
 
 #ifdef _TV_UNIX
+#include <poll.h>
+#else
+#include <tvision/compat/windows/windows.h>
+#endif
+
+namespace tvision
+{
+
+#ifdef _TV_UNIX
 using SysHandle = int;
 #else
-#include <tvision/compat/win.h>
 using SysHandle = HANDLE;
 #endif
 
@@ -62,11 +70,13 @@ public:
     {
     }
 
+    virtual ~EventSource() {}
+
     virtual bool hasPendingEvents() noexcept;
-    virtual bool getEvent(TEvent &) noexcept = 0;
+    virtual bool getEvent(TEvent &) noexcept;
 };
 
-class WakeUpEventSource final : public EventSource
+class WakeUpEventSource : public EventSource
 {
     SysManualEvent sys;
     bool (*callback) (void *, TEvent &) noexcept;
@@ -100,7 +110,6 @@ inline WakeUpEventSource::WakeUpEventSource( SysManualEvent::Handle aHandle,
 }
 
 #ifdef _TV_UNIX
-#include <poll.h>
 using PollItem = struct pollfd;
 static inline PollItem pollItem(SysHandle fd) noexcept { return {fd, POLLIN}; }
 #else
@@ -159,8 +168,10 @@ public:
     void removeSource(EventSource &) noexcept;
 
     bool getEvent(TEvent &ev) noexcept;
-    void waitForEvents(int ms) noexcept;
-    void stopEventWait() noexcept;
+    void waitForEvent(int ms) noexcept;
+    void interruptEventWait() noexcept;
 };
+
+} // namespace tvision
 
 #endif // TVISION_EVENTS_H

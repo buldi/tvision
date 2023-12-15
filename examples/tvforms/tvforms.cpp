@@ -80,7 +80,6 @@ __link( RMemo )
 #define FORM_WILDCARD "*.f16"
 #endif
 
-extern TPoint shadowSize;
 const int MAXSIZE = 150;
 
 
@@ -125,7 +124,7 @@ void TFormApp::changeDir()
 void TFormApp::openListDialog()
 {
     TFileDialog *d;
-    char *fileName;
+    char fileName[MAXPATH];
     TDialog *listEditor;
     char errorMsg[MAXSIZE];
     extern Boolean fileExists( char *);
@@ -140,7 +139,6 @@ void TFormApp::openListDialog()
         {
         if (deskTop->execView(d) != cmCancel)
             {
-            fileName = new char[MAXPATH];
             d->getFileName(fileName);
             if (!fileExists(fileName))
                 {
@@ -157,7 +155,6 @@ void TFormApp::openListDialog()
                     deskTop->insert(validView(new TListDialog(fileName, name)));
                 else listEditor->select();
                 }
-            delete fileName;
             }
         destroy(d);
         }
@@ -185,15 +182,11 @@ void TFormApp::handleEvent(TEvent& event)
                 break;
             case cmVideoMode:
                 newMode = TScreen::screenMode ^ TDisplay::smFont8x8;
-                if ((newMode & TDisplay::smFont8x8) != 0)
-                    shadowSize.x = 1;
-                else
-                    shadowSize.x = 2;
                 setScreenMode((ushort)newMode);
                 break;
 
             default:
-                return; 
+                return;
             }
         clearEvent(event);
         }
@@ -227,12 +220,15 @@ TStatusLine *TFormApp::initStatusLine( TRect r )
 {
     r.a.y = r.b.y - 1;
     return new TStatusLine( r,
-    *new TStatusDef( 0, 0xFFFF ) +
-      *new TStatusItem( "~F2~ Save", kbF2, cmListSave ) +
-      *new TStatusItem( "~F3~ Open", kbF3, cmListOpen ) +
-      *new TStatusItem( "~F10~ Menu", kbF10, cmMenu) +
-      *new TStatusItem( "", kbCtrlF5, cmResize )
-      );
+      *new TStatusDef( 0, 0xFFFF ) +
+        *new TStatusItem( "~F2~ Save", kbF2, cmListSave ) +
+        *new TStatusItem( "~F3~ Open", kbF3, cmListOpen ) +
+        *new TStatusItem( "~F10~ Menu", kbF10, cmMenu) +
+        *new TStatusItem( 0, kbShiftDel, cmCut ) +
+        *new TStatusItem( 0, kbCtrlIns, cmCopy ) +
+        *new TStatusItem( 0, kbShiftIns, cmPaste ) +
+        *new TStatusItem( "", kbCtrlF5, cmResize )
+        );
 }
 
 int main()

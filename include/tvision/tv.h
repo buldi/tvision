@@ -32,9 +32,19 @@
 #define _NEAR near
 #endif
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
+#endif
+#if defined( _MSC_VER )
+#pragma warning(push)
+#pragma warning(disable: 4250)
+#endif
+#if defined( __GNUC__ )
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
 #endif
 
 #if !defined( __FLAT__ )
@@ -51,6 +61,7 @@
 
 #define Uses_EventCodes
 #define Uses_ViewCommands
+#define __INC_TKEYS_H
 #define __INC_STDDLG_H
 
 #if defined( Uses_TApplication )
@@ -497,6 +508,14 @@
 #define __INC_SYSTEM_H
 #endif
 
+#if defined( Uses_TClipboard )
+#define __INC_SYSTEM_H
+#endif
+
+#if defined( Uses_TTimerQueue )
+#define __INC_SYSTEM_H
+#endif
+
 #if defined( Uses_TEventQueue )
 #define Uses_TEvent
 #define __INC_SYSTEM_H
@@ -745,8 +764,15 @@
 #include <tvision/app.h>
 #endif
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif
-
+#if defined( _MSC_VER )
+#pragma warning(pop)
+#endif
+#if defined( __GNUC__ )
+#pragma GCC diagnostic pop
+#endif

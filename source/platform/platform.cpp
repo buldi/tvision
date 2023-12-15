@@ -3,60 +3,80 @@
 #include <internal/linuxcon.h>
 #include <internal/win32con.h>
 #include <internal/sighandl.h>
+#include <internal/codepage.h>
 #include <locale.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-// This is used by TText. It is a global function pointer (instead of a
-// Platform instance method) so that it can be still used after
-// Platform::instance has been destroyed.
-int (*Platform::charWidth)(uint32_t) noexcept = &Platform::errorCharWidth;
-
-int Platform::errorCharWidth(uint32_t) noexcept
+namespace tvision
 {
-    fputs( "Cannot measure character widths before the platform module is "
-           "loaded.\nAvoid invoking TText methods during static initialization.\n",
-           stderr );
-    abort();
+
+Platform *Platform::instance;
+
+// This is used by TText. It is a global function pointer (instead of an
+// instance method) so that it can be used regardless of whether the global
+// Platform instance has been created/destroyed or not.
+int (*Platform::charWidth)(uint32_t) noexcept = &Platform::initAndGetCharWidth;
+
+int Platform::initAndGetCharWidth(uint32_t wc) noexcept
+{
+    initEncodingStuff();
+    return charWidth(wc);
 }
 
-Platform Platform::instance;
+void Platform::initEncodingStuff() noexcept
+{
+    static int init = [] ()
+    {
+        CpTranslator::init();
+#ifdef _WIN32
+        setlocale(LC_ALL, ".utf8");
+        charWidth = &Win32ConsoleStrategy::charWidth;
+#else
+        setlocale(LC_ALL, "");
+#ifdef __linux__
+        auto &io = StdioCtl::getInstance();
+        if (io.isLinuxConsole())
+            charWidth = &LinuxConsoleStrategy::charWidth;
+        else
+#endif // __linux__
+            charWidth = &UnixConsoleStrategy::charWidth;
+#endif // _WIN32
+
+        (void) init;
+        return 0;
+    }();
+}
 
 Platform::Platform() noexcept
 {
-#ifdef _WIN32
-    setlocale(LC_ALL, ".utf8");
-    charWidth = &Win32ConsoleStrategy::charWidth;
-#else
-    setlocale(LC_ALL, "");
-    charWidth =
-#ifdef __linux__
-        io.isLinuxConsole() ? &LinuxConsoleStrategy::charWidth :
-#endif // __linux__
-        &UnixConsoleStrategy::charWidth;
-#endif // _WIN32
+    instance = this;
+    initEncodingStuff();
 }
 
 Platform::~Platform()
 {
     restoreConsole();
+#ifndef _WIN32
+    StdioCtl::destroyInstance();
+#endif
+    instance = nullptr;
 }
 
-void Platform::restoreConsole() noexcept
+void Platform::restoreConsole(ConsoleStrategy *&c) noexcept
 {
-    auto doRemove = [] (void *self, EventSource &source) {
-        ((Platform *) self)->waiter.removeSource(source);
-    };
-    console.lock([&] (ConsoleStrategy *&c) {
-        if (c != &dummyConsole)
-        {
-            flushScreen();
-            c->forEachSource(this, *(void (*)(void *, EventSource &)) doRemove);
-            SignalHandler::disable();
-            delete c;
-            c = &dummyConsole;
-        }
-    });
+    if (c != &dummyConsole)
+    {
+        displayBuf.flushScreen(c->display);
+        for (auto *source : c->sources)
+            if (source)
+                waiter.removeSource(*source);
+        SignalHandler::disable();
+        delete c;
+        c = &dummyConsole;
+    }
 }
 
 // The remaining methods are in platfcon.cpp.
+
+} // namespace tvision

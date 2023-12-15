@@ -22,6 +22,7 @@
 #define Uses_opstream
 #define Uses_ipstream
 #define Uses_TText
+#define Uses_TClipboard
 #include <tvision/tv.h>
 
 #if !defined( __STRING_H )
@@ -326,9 +327,16 @@ uint TEditor::charPtr( uint p, int target )
 Boolean TEditor::clipCopy()
 {
     Boolean res = False;
-    if( (clipboard != 0) && (clipboard != this) )
+    if( clipboard != this )
         {
-        res = clipboard->insertFrom(this);
+        if( clipboard != 0 )
+            res = clipboard->insertFrom(this);
+        else
+            {
+            TClipboard::setText( TStringView( buffer + bufPtr(selStart),
+                                              selEnd - selStart ) );
+            res = True;
+            }
         selecting = False;
         update(ufUpdate);
         }
@@ -343,8 +351,13 @@ void TEditor::clipCut()
 
 void TEditor::clipPaste()
 {
-    if( (clipboard != 0) && (clipboard != this) )
-        insertFrom(clipboard);
+    if( clipboard != this )
+        {
+        if( clipboard != 0 )
+            insertFrom(clipboard);
+        else
+            TClipboard::requestText();
+        }
 }
 
 void TEditor::convertEvent( TEvent& event )
@@ -411,7 +424,7 @@ void TEditor::deleteSelect()
 
 void TEditor::doneBuffer()
 {
-    delete buffer;
+    delete[] buffer;
 }
 
 void TEditor::doSearchReplace()
@@ -605,24 +618,29 @@ void TEditor::handleEvent( TEvent& event )
             break;
 
         case evKeyDown:
-            if( ( !encSingleByte && event.keyDown.textLength ) ||
+            if( ( !encSingleByte && event.keyDown.textLength > 0 ) ||
                 event.keyDown.charScan.charCode == 9 ||
                 ( event.keyDown.charScan.charCode >= 32 && event.keyDown.charScan.charCode < 255 )
               )
                 {
                 lock();
-                if( overwrite == True && hasSelection() == False )
-                    if( curPtr != lineEnd(curPtr) )
-                        selEnd = nextChar(curPtr);
-
-                if( encSingleByte )
-                    insertText( &event.keyDown.charScan.charCode, 1, False);
-                else
+                if( event.keyDown.controlKeyState & kbPaste )
                     {
                     char buf[512];
                     size_t length;
                     while( textEvent( event, TSpan<char>(buf, sizeof(buf)), length ) )
-                        insertAndConvertText( buf, (uint) length, False );
+                        insertMultilineText( buf, (uint) length );
+                    }
+                else
+                    {
+                    if( overwrite == True && hasSelection() == False )
+                        if( curPtr != lineEnd(curPtr) )
+                            selEnd = nextChar(curPtr);
+
+                    if( !encSingleByte && event.keyDown.textLength > 0 )
+                        insertText( event.keyDown.text, event.keyDown.textLength, False );
+                    else
+                        insertText( &event.keyDown.charScan.charCode, 1, False );
                     }
 
                 trackCursor(centerCursor);

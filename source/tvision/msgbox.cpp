@@ -25,14 +25,6 @@
 #define Uses_TLabel
 #include <tvision/tv.h>
 
-#if !defined( __STDARG_H )
-#include <stdarg.h>
-#endif  // __STDARG_H
-
-#if !defined( __STDIO_H )
-#include <stdio.h>
-#endif  // __STDIO_H
-
 #if !defined( __STRING_H )
 #include <string.h>
 #endif  // __STRING_H
@@ -108,18 +100,15 @@ ushort messageBoxRect( const TRect &r,
                        ... ) noexcept
 {
     va_list argptr;
+
     va_start( argptr, fmt );
-
-    char msg[256];
-#ifdef __BORLANDC__
-    vsprintf( msg, fmt, argptr );
-#else
-    vsnprintf( msg, 256, fmt, argptr );
-#endif
-
+    char *msg = vfmtStr( fmt, argptr );
     va_end( argptr );
 
-    return messageBoxRect( r, msg, aOptions );
+    ushort ret = messageBoxRect( r, msg, aOptions );
+
+    delete[] msg;
+    return ret;
 }
 
 static TRect makeRect(TStringView text)
@@ -127,8 +116,8 @@ static TRect makeRect(TStringView text)
     TRect r( 0, 0, 40, 9 );
 
     int width = strwidth(text);
-    while (width > (r.b.x - 7)*(r.b.y - 6))
-        ++r.b.y;
+    if (width > (r.b.x - 7)*(r.b.y - 6))
+        r.b.y = width/(r.b.x - 7) + 6 + 1;
 
     r.move((TProgram::deskTop->size.x - r.b.x) / 2,
            (TProgram::deskTop->size.y - r.b.y) / 2);
@@ -143,18 +132,15 @@ ushort messageBox( TStringView msg, ushort aOptions ) noexcept
 ushort messageBox( unsigned aOptions, const char *fmt, ... ) noexcept
 {
     va_list argptr;
+
     va_start( argptr, fmt );
-
-    char msg[256];
-#ifdef __BORLANDC__
-    vsprintf( msg, fmt, argptr );
-#else
-    vsnprintf( msg, 256, fmt, argptr );
-#endif
-
+    char *msg = vfmtStr( fmt, argptr );
     va_end( argptr );
 
-    return messageBoxRect( makeRect(msg), msg, aOptions );
+    ushort ret = messageBoxRect( makeRect(msg), msg, aOptions );
+
+    delete[] msg;
+    return ret;
 }
 
 ushort inputBox( TStringView Title, TStringView aLabel, char *s, uchar limit ) noexcept

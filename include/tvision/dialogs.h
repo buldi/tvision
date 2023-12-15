@@ -15,7 +15,9 @@
  *
  */
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
 #endif
@@ -151,9 +153,9 @@ inline opstream& operator << ( opstream& os, TDialog* cl )
 #define __TInputLine
 
 const ushort
-    ilMaxBytes      = 0,
-    ilMaxWidth      = 1,
-    ilMaxGraphemes  = 2;
+    ilMaxBytes = 0,
+    ilMaxWidth = 1,
+    ilMaxChars = 2;
 
 class _FAR TRect;
 struct _FAR TEvent;
@@ -181,7 +183,7 @@ public:
     char* data;
     uint maxLen;
     uint maxWidth;
-    uint maxGraphemes;
+    uint maxChars;
     int curPos;
     int firstPos;
     int selStart;
@@ -199,6 +201,9 @@ private:
     void saveState();
     void restoreState();
     Boolean checkValid(Boolean);
+    Boolean canUpdateCommands();
+    void setCmdState( ushort, Boolean );
+    void updateCommands();
 
     static const char _NEAR rightArrow;
     static const char _NEAR leftArrow;
@@ -294,6 +299,9 @@ private:
     void drawTitle( TDrawBuffer&, int, int, TAttrPair, Boolean );
     void pressButton( TEvent& );
     TRect getActiveRect();
+
+    enum { animationDuration = 100 };
+    TTimerId animationTimer;
 
     static const char * _NEAR shadows;
     static const char * _NEAR markers;
@@ -1031,8 +1039,9 @@ inline opstream& operator << ( opstream& os, THistory* cl )
 
 #endif  // Uses_THistory
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif
-

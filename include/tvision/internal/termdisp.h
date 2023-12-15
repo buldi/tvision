@@ -3,6 +3,9 @@
 
 #include <internal/platform.h>
 
+namespace tvision
+{
+
 // Terminal quirk flags.
 
 const uint
@@ -36,7 +39,7 @@ class TerminalDisplay : public DisplayStrategy
 
 protected:
 
-    const StdioCtl &io;
+    StdioCtl &io;
     TermCap termcap;
 
     // The subclass must invoke this in the constructor.
@@ -48,7 +51,7 @@ protected:
 public:
 
     // The lifetime of 'aIo' exceeds that of 'this'.
-    TerminalDisplay(const StdioCtl &aIo) noexcept :
+    TerminalDisplay(StdioCtl &aIo) noexcept :
         io(aIo)
     {
     }
@@ -57,5 +60,7 @@ public:
     ushort getScreenMode() noexcept override;
     bool screenChanged() noexcept override;
 };
+
+} // namespace tvision
 
 #endif // TVISION_TERMDISP_H

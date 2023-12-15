@@ -1,22 +1,26 @@
 #ifndef TVISION_LINUXCON_H
 #define TVISION_LINUXCON_H
 
-#include <internal/unixcon.h>
-
 #ifdef __linux__
 
-#define Uses_TKeys
-#define Uses_TEvent
-#include <tvision/tv.h>
+#include <internal/platform.h>
+#include <internal/errredir.h>
 
-class GpmInput;
+struct TEvent;
 
-struct LinuxConsoleInput : public EventSource
+namespace tvision
 {
-    const StdioCtl &io;
+
+class SigwinchHandler;
+class GpmInput;
+struct InputState;
+
+struct LinuxConsoleInput final : public EventSource
+{
+    StdioCtl &io;
     InputStrategy &input;
 
-    LinuxConsoleInput(const StdioCtl &aIo, InputStrategy &aInput) noexcept :
+    LinuxConsoleInput(StdioCtl &aIo, InputStrategy &aInput) noexcept :
         EventSource(aInput.handle),
         io(aIo),
         input(aInput)
@@ -26,36 +30,37 @@ struct LinuxConsoleInput : public EventSource
     bool getEvent(TEvent &ev) noexcept override;
     bool hasPendingEvents() noexcept override;
 
-    static ushort keyCodeWithModifiers(ulong, ushort) noexcept;
-    static void applyKeyboardModifiers(const StdioCtl &io, KeyDownEvent &key) noexcept;
+    static ushort getKeyboardModifiers(StdioCtl &io) noexcept;
 };
 
-class LinuxConsoleStrategy : public UnixConsoleStrategy
+class LinuxConsoleStrategy : public ConsoleStrategy
 {
-    LinuxConsoleInput wrapper;
+    StderrRedirector errRedir;
 
-    LinuxConsoleStrategy( const StdioCtl &aIo, ScreenLifetime &aScrl,
-                          DisplayStrategy &aDisplay, InputStrategy &aInput,
-                          GpmInput *gpm ) noexcept :
-        UnixConsoleStrategy(aScrl, aDisplay, gpm ? (InputStrategy &) *gpm : aInput),
-        wrapper(aIo, aInput)
-    {
-    }
+    InputState &inputState;
+    SigwinchHandler *sigwinch;
+    LinuxConsoleInput &wrapper;
+    GpmInput *gpm;
+
+    LinuxConsoleStrategy( DisplayStrategy &, LinuxConsoleInput &,
+                          InputState &, SigwinchHandler *,
+                          GpmInput * ) noexcept;
 
 public:
 
-    // Pre: 'isLinuxConsole(io)' returns 'true'.
+    // Pre: 'io.isLinuxConsole()' returns 'true'.
     // The lifetime of 'io' must exceed that of the returned object.
-    // Takes ownership over 'display' and 'input'.
-    static LinuxConsoleStrategy &create( const StdioCtl &io, ScreenLifetime &scrl,
+    // Takes ownership over 'inputState', 'display' and 'input'.
+    static LinuxConsoleStrategy &create( StdioCtl &io,
+                                         InputState &inputState,
                                          DisplayStrategy &display,
                                          InputStrategy &input ) noexcept;
     ~LinuxConsoleStrategy();
 
-    void forEachSource(void *, void (&)(void *, EventSource &)) noexcept override;
-
     static int charWidth(uint32_t) noexcept;
 };
+
+} // namespace tvision
 
 #endif // __linux__
 

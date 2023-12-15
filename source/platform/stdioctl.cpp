@@ -5,6 +5,26 @@
 #include <internal/getenv.h>
 #include <initializer_list>
 
+namespace tvision
+{
+
+StdioCtl *StdioCtl::instance = nullptr;
+
+StdioCtl &StdioCtl::getInstance() noexcept
+{
+    if (!instance)
+        instance = new StdioCtl;
+    return *instance;
+}
+
+void StdioCtl::destroyInstance() noexcept
+{
+    delete instance;
+    instance = nullptr;
+}
+
+} // namespace tvision
+
 #ifdef _TV_UNIX
 
 #include <unistd.h>
@@ -13,6 +33,9 @@
 #if __has_include(<linux/kd.h>)
 #   include <linux/kd.h>
 #endif
+
+namespace tvision
+{
 
 StdioCtl::StdioCtl() noexcept
 {
@@ -32,9 +55,13 @@ StdioCtl::StdioCtl() noexcept
     {
         for (auto &fd : fds)
             fd = ttyfd;
+        int ttyfd2 = dup(ttyfd);
+        if (ttyfd2 == -1)
+            ttyfd2 = ttyfd; // This is wrong, but aborting is worse.
         infile = ::fdopen(ttyfd, "r");
-        outfile = ::fdopen(ttyfd, "w");
+        outfile = ::fdopen(ttyfd2, "w");
         fcntl(ttyfd, F_SETFD, FD_CLOEXEC);
+        fcntl(ttyfd2, F_SETFD, FD_CLOEXEC);
     }
     else
     {
@@ -49,9 +76,6 @@ StdioCtl::~StdioCtl()
 {
     if (ttyfd != -1)
     {
-        ::fflush(infile);
-        ::fflush(outfile);
-        ::close(ttyfd);
         ::fclose(infile);
         ::fclose(outfile);
     }
@@ -62,9 +86,9 @@ void StdioCtl::write(const char *data, size_t bytes) const noexcept
     fflush(fout());
     size_t written = 0;
     int r;
-    while ( 0 <= (r = ::write(out(), data + written, bytes - written)) &&
-            (written += r) < bytes )
-        ;
+    while ( written < bytes &&
+            0 <= (r = ::write(out(), data + written, bytes - written)) )
+        written += r;
 }
 
 TPoint StdioCtl::getSize() const noexcept
@@ -125,9 +149,14 @@ bool StdioCtl::isLinuxConsole() const noexcept
 
 #endif // __linux__
 
+} // namespace tvision
+
 #elif defined(_WIN32)
 
 #include <stdio.h>
+
+namespace tvision
+{
 
 namespace stdioctl
 {
@@ -141,6 +170,14 @@ namespace stdioctl
     {
         DWORD mode;
         return GetConsoleMode(h, &mode);
+    }
+
+    static COORD windowSize(SMALL_RECT srWindow)
+    {
+        return {
+            short(srWindow.Right - srWindow.Left + 1),
+            short(srWindow.Bottom - srWindow.Top + 1),
+        };
     }
 
 } // namespace stdioctl
@@ -207,8 +244,8 @@ StdioCtl::StdioCtl() noexcept
     }
     if (!isValid(cn[input].handle))
     {
-        cn[input].handle = CreateFile(
-            "CONIN$",
+        cn[input].handle = CreateFileW(
+            L"CONIN$",
             GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ,
             nullptr,
@@ -219,8 +256,8 @@ StdioCtl::StdioCtl() noexcept
     }
     if (!isValid(cn[startupOutput].handle))
     {
-        cn[startupOutput].handle = CreateFile(
-            "CONOUT$",
+        cn[startupOutput].handle = CreateFileW(
+            L"CONOUT$",
             GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_WRITE,
             nullptr,
@@ -242,8 +279,7 @@ StdioCtl::StdioCtl() noexcept
         // Force the screen buffer size to match the window size.
         // The Console API guarantees this, but some implementations
         // are not compliant (e.g. Wine).
-        sbInfo.dwSize.X = sbInfo.srWindow.Right - sbInfo.srWindow.Left + 1;
-        sbInfo.dwSize.Y = sbInfo.srWindow.Bottom - sbInfo.srWindow.Top + 1;
+        sbInfo.dwSize = windowSize(sbInfo.srWindow);
         SetConsoleScreenBufferSize(cn[activeOutput].handle, sbInfo.dwSize);
     }
     SetConsoleActiveScreenBuffer(cn[activeOutput].handle);
@@ -257,6 +293,40 @@ StdioCtl::StdioCtl() noexcept
 
 StdioCtl::~StdioCtl()
 {
+    using namespace stdioctl;
+    CONSOLE_SCREEN_BUFFER_INFO activeSbInfo {};
+    GetConsoleScreenBufferInfo(cn[activeOutput].handle, &activeSbInfo);
+    CONSOLE_SCREEN_BUFFER_INFO startupSbInfo {};
+    GetConsoleScreenBufferInfo(cn[startupOutput].handle, &startupSbInfo);
+
+    COORD activeWindowSize = windowSize(activeSbInfo.srWindow);
+    COORD startupWindowSize = windowSize(startupSbInfo.srWindow);
+
+    // Preserve the current window size.
+    if ( activeWindowSize.X != startupWindowSize.X ||
+         activeWindowSize.Y != startupWindowSize.Y )
+    {
+        // The buffer is not allowed to be smaller than the window, so enlarge
+        // it if necessary. But do not shrink it in the opposite case, to avoid
+        // loss of data.
+        COORD dwSize = startupSbInfo.dwSize;
+        if (dwSize.X < activeWindowSize.X)
+            dwSize.X = activeWindowSize.X;
+        if (dwSize.Y < activeWindowSize.Y)
+            dwSize.Y = activeWindowSize.Y;
+        SetConsoleScreenBufferSize(cn[startupOutput].handle, dwSize);
+        // Get the updated cursor position, in case it changed after the resize.
+        GetConsoleScreenBufferInfo(cn[startupOutput].handle, &startupSbInfo);
+        // Make sure the cursor is visible. If possible, show it in the bottom row.
+        SMALL_RECT srWindow = startupSbInfo.srWindow;
+        COORD dwCursorPosition = startupSbInfo.dwCursorPosition;
+        srWindow.Right = max(dwCursorPosition.X, activeWindowSize.X - 1);
+        srWindow.Left = srWindow.Right - (activeWindowSize.X - 1);
+        srWindow.Bottom = max(dwCursorPosition.Y, activeWindowSize.Y - 1);
+        srWindow.Top = srWindow.Bottom - (activeWindowSize.Y - 1);
+        SetConsoleWindowInfo(cn[startupOutput].handle, TRUE, &srWindow);
+    }
+
     SetConsoleActiveScreenBuffer(cn[startupOutput].handle);
     for (auto &c : cn)
         if (c.owning)
@@ -270,7 +340,7 @@ void StdioCtl::write(const char *data, size_t bytes) const noexcept
     // Writing 0 bytes causes the cursor to become invisible for a short time
     // in old versions of the Windows console.
     if (bytes != 0)
-        WriteConsole(out(), data, bytes, nullptr, nullptr);
+        WriteConsoleA(out(), data, bytes, nullptr, nullptr);
 }
 
 TPoint StdioCtl::getSize() const noexcept
@@ -295,5 +365,7 @@ TPoint StdioCtl::getFontSize() const noexcept
         };
     return {0, 0};
 }
+
+} // namespace tvision
 
 #endif // _TV_UNIX

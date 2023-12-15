@@ -13,7 +13,9 @@
  *
  */
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
 #endif
@@ -248,6 +250,7 @@ const int
 
 class _FAR TDialog;
 class _FAR TWindow;
+class _FAR TTimerQueue;
 
 class TProgram : public TGroup, public virtual TProgInit
 {
@@ -266,12 +269,14 @@ public:
     virtual void initScreen();
     virtual void outOfMemory();
     virtual void putEvent( TEvent& event );
-    virtual Boolean textEvent(TEvent& event, TSpan<char> dest, size_t &length);
     virtual void run();
     virtual TWindow* insertWindow(TWindow*);
     void setScreenMode( ushort mode );
     TView *validView( TView *p ) noexcept;
     virtual void shutDown();
+
+    virtual TTimerId setTimer( uint timeoutMs, int periodMs = -1 );
+    virtual void killTimer( TTimerId id );
 
     virtual void suspend() {}
     virtual void resume() {}
@@ -285,7 +290,7 @@ public:
     static TMenuBar * _NEAR menuBar;
     static TDeskTop * _NEAR deskTop;
     static int _NEAR appPalette;
-    static int _NEAR appEventTimeout;
+    static int _NEAR eventTimeout;
 
 protected:
 
@@ -293,9 +298,10 @@ protected:
 
 private:
 
-    Boolean readTextEvent(TEvent &, TSpan<char>, size_t &, Boolean);
+    static int eventWaitTimeout();
 
     static const char * _NEAR exitText;
+    static TTimerQueue _NEAR timerQueue;
 
 };
 
@@ -304,16 +310,16 @@ private:
 #if defined( Uses_TApplication ) && !defined( __TApplication )
 #define __TApplication
 
-class TStaticInit
+class TSubsystemsInit
 {
 
 public:
-    TStaticInit() noexcept;
+
+    TSubsystemsInit() noexcept;
 
 };
 
-// Virtual inheritance of TStaticInit to ensure its constructor is ran first.
-class TApplication : public TProgram, public virtual TStaticInit
+class TApplication : public virtual TSubsystemsInit, public TProgram
 {
 
 protected:
@@ -336,8 +342,9 @@ public:
 
 #endif
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif
-

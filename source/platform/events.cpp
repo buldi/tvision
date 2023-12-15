@@ -6,13 +6,19 @@ using std::chrono::nanoseconds;
 using std::chrono::duration_cast;
 using std::chrono::steady_clock;
 
+#ifdef _TV_UNIX
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#endif
+
+namespace tvision
+{
+
 /////////////////////////////////////////////////////////////////////////
 // SysManualEvent
 
 #ifdef _TV_UNIX
-
-#include <unistd.h>
-#include <fcntl.h>
 
 bool SysManualEvent::createHandle(int (&fds)[2]) noexcept
 {
@@ -47,7 +53,7 @@ void SysManualEvent::clear() noexcept
 
 bool SysManualEvent::createHandle(HANDLE &hEvent) noexcept
 {
-    return (hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)) != NULL;
+    return (hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr)) != NULL;
 }
 
 SysManualEvent::~SysManualEvent()
@@ -71,6 +77,11 @@ void SysManualEvent::clear() noexcept
 // EventSource
 
 bool EventSource::hasPendingEvents() noexcept
+{
+    return false;
+}
+
+bool EventSource::getEvent(TEvent &) noexcept
 {
     return false;
 }
@@ -113,7 +124,6 @@ bool WakeUpEventSource::getEvent(TEvent &ev) noexcept
 // EventWaiter
 
 #ifdef _TV_UNIX
-#include <sys/ioctl.h>
 
 static bool fdEmpty(int fd) noexcept
 {
@@ -252,7 +262,7 @@ bool EventWaiter::getEvent(TEvent &ev) noexcept
     return false;
 }
 
-void EventWaiter::waitForEvents(int ms) noexcept
+void EventWaiter::waitForEvent(int ms) noexcept
 {
     auto now = steady_clock::now();
     const auto end = ms < 0 ? time_point::max() : now + milliseconds(ms);
@@ -263,8 +273,10 @@ void EventWaiter::waitForEvents(int ms) noexcept
     }
 }
 
-void EventWaiter::stopEventWait() noexcept
+void EventWaiter::interruptEventWait() noexcept
 {
     if (wakeUp)
         wakeUp->signal();
 }
+
+} // namespace tvision

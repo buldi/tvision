@@ -3,12 +3,17 @@
 
 #include <tvision/tv.h>
 
+#ifdef _TV_UNIX
+#include <signal.h>
+#include <atomic>
+#endif
+
+namespace tvision
+{
+
 using SignalHandlerCallback = void(bool enter);
 
 #ifdef _TV_UNIX
-
-#include <signal.h>
-#include <atomic>
 
 class SignalHandler
 {
@@ -49,7 +54,7 @@ private:
 
     static void handleSignal(int, siginfo_t *, void *);
     static HandlerInfo &getHandlerInfo(int) noexcept;
-    static bool invokeHandlerOrDefault(int, struct sigaction &, siginfo_t *, void *) noexcept;
+    static bool invokeHandlerOrDefault(int, const struct sigaction &, siginfo_t *, void *) noexcept;
     static bool invokeDefault(int, siginfo_t *) noexcept;
 
 public:
@@ -65,10 +70,12 @@ class SignalHandler
 {
 public:
 
-    static void enable(SignalHandlerCallback &aCallback) noexcept {}
+    static void enable(SignalHandlerCallback &) noexcept {}
     static void disable() noexcept {}
 };
 
 #endif // _TV_UNIX
+
+} // namespace tvision
 
 #endif // TVISION_SIGHANDL_H

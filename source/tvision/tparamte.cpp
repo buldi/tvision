@@ -21,10 +21,6 @@
 #include <stdio.h>
 #endif  // __STDIO_H
 
-#if !defined( __STDARG_H )
-#include <stdarg.h>
-#endif  // __STDARG_H
-
 #if !defined( __STRING_H )
 #include <string.h>
 #endif  // __STRING_H
@@ -59,11 +55,7 @@ void TParamText::setText( const char *fmt, ... )
     va_list ap;
 
     va_start( ap, fmt );
-#ifdef __BORLANDC__
-    vsprintf( str, fmt, ap );
-#else
     vsnprintf( str, 256, fmt, ap );
-#endif
     va_end( ap );
 
     drawView();

@@ -70,7 +70,7 @@ public:
 
 private:
 
-    long asciiChar;
+    uchar asciiChar;
 
     virtual const char *streamableName() const
          { return name; }
@@ -105,7 +105,7 @@ public:
 
     TAsciiChart();
     TAsciiChart( StreamableInit ) :
-        TWindowInit(&initFrame), TWindow(streamableInit) { };
+        TWindowInit(0), TWindow(streamableInit) { };
     virtual void handleEvent( TEvent &event );
 
 private:

@@ -14,7 +14,9 @@
  *
  */
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
 #endif
@@ -166,12 +168,14 @@ const ushort
     cmClear         = 24,
     cmTile          = 25,
     cmCascade       = 26,
+    cmRedo          = 27,
 
 // Standard messages
 
     cmReceivedFocus     = 50,
     cmReleasedFocus     = 51,
     cmCommandSetChanged = 52,
+    cmTimeout           = 58,
 
 // TScrollBar messages
 
@@ -187,6 +191,7 @@ const ushort
     cmListItemSelected  = 56,
 
 //  TProgram messages
+
     cmScreenChanged     = 57,
 
 //  Event masks
@@ -411,9 +416,13 @@ public:
     void select();
     virtual void setState( ushort aState, Boolean enable );
 
+    void getEvent( TEvent& event, int timeoutMs );
     void keyEvent( TEvent& event );
     Boolean mouseEvent( TEvent& event, ushort mask );
-    virtual Boolean textEvent( TEvent &event, TSpan<char> dest, size_t &length );
+    Boolean textEvent( TEvent &event, TSpan<char> dest, size_t &length );
+
+    virtual TTimerId setTimer( uint timeoutMs, int periodMs = -1 );
+    virtual void killTimer( TTimerId id );
 
     TPoint makeGlobal( TPoint source ) noexcept;
     TPoint makeLocal( TPoint source ) noexcept;
@@ -467,7 +476,7 @@ private:
                    TPoint maxSize,
                    uchar mode
                  );
-    void change( uchar, TPoint delta, TPoint& p, TPoint& s, ulong ctrlState ) noexcept;
+    void change( uchar, TPoint delta, TPoint& p, TPoint& s, ushort ctrlState ) noexcept;
     static void writeView( write_args );
     void writeView( short x, short y, short count, const void _FAR* b ) noexcept;
 #ifndef __BORLANDC__
@@ -1028,8 +1037,9 @@ inline opstream& operator << ( opstream& os, TWindow* cl )
 
 #endif  // Uses_TWindow
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif
-

@@ -1,9 +1,6 @@
-#ifdef _WIN32
-
 #define Uses_TEvent
 #define Uses_TKeys
 #define Uses_THardwareInfo
-#define Uses_TScreen
 #include <tvision/tv.h>
 #include <internal/win32con.h>
 #include <internal/stdioctl.h>
@@ -11,11 +8,22 @@
 #include <internal/codepage.h>
 #include <internal/ansidisp.h>
 #include <internal/terminal.h>
+#include <internal/utf8.h>
 #include <locale.h>
+
+namespace tvision
+{
+
+#ifdef _WIN32
+
+static bool isWine() noexcept
+{
+    return GetProcAddress(GetModuleHandleW(L"ntdll"), "wine_get_version");
+}
 
 Win32ConsoleStrategy &Win32ConsoleStrategy::create() noexcept
 {
-    auto &io = *new StdioCtl;
+    auto &io = StdioCtl::getInstance();
     // Set the input mode.
     {
         DWORD consoleMode = 0;
@@ -34,11 +42,19 @@ Win32ConsoleStrategy &Win32ConsoleStrategy::create() noexcept
         consoleMode &= ~ENABLE_WRAP_AT_EOL_OUTPUT; // Avoid scrolling when reaching end of line.
         SetConsoleMode(io.out(), consoleMode);
         // Try enabling VT sequences.
-        consoleMode |= DISABLE_NEWLINE_AUTO_RETURN; // Do not do CR on LF.
-        consoleMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING; // Allow ANSI escape sequences.
-        SetConsoleMode(io.out(), consoleMode);
-        GetConsoleMode(io.out(), &consoleMode);
-        supportsVT = consoleMode & ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        if (isWine())
+            // Wine does not support them, but unlike the legacy console,
+            // it does not return error when attempting to enable it, so we
+            // have to handle this case separately.
+            supportsVT = false;
+        else
+        {
+            consoleMode |= DISABLE_NEWLINE_AUTO_RETURN; // Do not do CR on LF.
+            consoleMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING; // Allow ANSI escape sequences.
+            SetConsoleMode(io.out(), consoleMode);
+            GetConsoleMode(io.out(), &consoleMode);
+            supportsVT = consoleMode & ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        }
     }
 
     // Set the console and the environment in UTF-8 mode.
@@ -96,7 +112,7 @@ Win32ConsoleStrategy::~Win32ConsoleStrategy()
     delete &input;
     SetConsoleCP(cpInput);
     SetConsoleOutputCP(cpOutput);
-    delete &io;
+    StdioCtl::destroyInstance();
 }
 
 bool Win32ConsoleStrategy::isAlive() noexcept
@@ -105,9 +121,65 @@ bool Win32ConsoleStrategy::isAlive() noexcept
     return GetNumberOfConsoleInputEvents(io.in(), &events);
 }
 
-void Win32ConsoleStrategy::forEachSource(void *args, void (&action)(void *, EventSource &)) noexcept
+static bool openClipboard() noexcept
 {
-    action(args, input);
+    for (int i = 0; i < 5; ++i)
+    {
+        if (OpenClipboard(nullptr))
+            return true;
+        Sleep(5);
+    }
+    return false;
+}
+
+bool Win32ConsoleStrategy::setClipboardText(TStringView text) noexcept
+{
+    bool result = false;
+    if (openClipboard())
+    {
+        HGLOBAL hData = NULL;
+        wchar_t *pData;
+        int dataLen;
+        if ( EmptyClipboard() &&
+             !(result = text.empty()) &&
+             (dataLen = MultiByteToWideChar(CP_UTF8, 0, text.data(), text.size(), nullptr, 0)) &&
+             (hData = GlobalAlloc(GMEM_MOVEABLE, (dataLen + 1)*sizeof(wchar_t))) &&
+             (pData = (wchar_t *) GlobalLock(hData))
+           )
+        {
+            MultiByteToWideChar(CP_UTF8, 0, text.data(), text.size(), pData, dataLen);
+            pData[dataLen] = L'\0';
+            GlobalUnlock(hData);
+            result = SetClipboardData(CF_UNICODETEXT, hData);
+        }
+        CloseClipboard();
+        if (hData && !result)
+            GlobalFree(hData);
+    }
+    return result;
+}
+
+bool Win32ConsoleStrategy::requestClipboardText(void (&accept)(TStringView)) noexcept
+{
+    bool result = false;
+    if (openClipboard())
+    {
+        HGLOBAL hData;
+        wchar_t *pData;
+        if ( (hData = GetClipboardData(CF_UNICODETEXT)) &&
+             (result = (pData = (wchar_t *) GlobalLock(hData))) )
+        {
+            size_t dataLen = wcslen(pData);
+            int textLen = WideCharToMultiByte(CP_UTF8, 0, pData, dataLen, nullptr, 0, nullptr, nullptr);
+            char *text = new char[textLen];
+            WideCharToMultiByte(CP_UTF8, 0, pData, dataLen, text, textLen, nullptr, nullptr);
+            GlobalUnlock(hData);
+            accept({text, size_t(textLen)});
+            delete[] text;
+        }
+        CloseClipboard();
+    }
+    return result;
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -165,123 +237,18 @@ bool Win32Input::getEvent(const INPUT_RECORD &ir, TEvent &ev) noexcept
         if ( ir.Event.KeyEvent.bKeyDown || // KeyDown
              (ir.Event.KeyEvent.wVirtualKeyCode == VK_MENU && // Pasted surrogate character
                 ir.Event.KeyEvent.uChar.UnicodeChar) )
-            return getKeyEvent(ir.Event.KeyEvent, ev);
+            return getWin32Key(ir.Event.KeyEvent, ev, state);
         break;
     case MOUSE_EVENT:
-        return getMouseEvent(ir.Event.MouseEvent, ev);
+        getWin32Mouse(ir.Event.MouseEvent, ev, state);
+        return true;
     case WINDOW_BUFFER_SIZE_EVENT:
         ev.what = evCommand;
         ev.message.command = cmScreenChanged;
         ev.message.infoPtr = 0;
-        return True;
+        return true;
     }
     return false;
-}
-
-bool Win32Input::getKeyEvent(KEY_EVENT_RECORD KeyEventW, TEvent &ev) noexcept
-{
-    if (getUnicodeEvent(KeyEventW, ev)) {
-        ev.what = evKeyDown;
-        ev.keyDown.charScan.scanCode = KeyEventW.wVirtualScanCode;
-        if (ev.keyDown.textLength) {
-            ev.keyDown.charScan.charCode = CpTranslator::fromUtf8(ev.keyDown.getText());
-            if (KeyEventW.wVirtualKeyCode == VK_MENU)
-                // This is enabled when pasting certain characters, and it confuses
-                // applications. Clear it.
-                ev.keyDown.charScan.scanCode = 0;
-            if (!ev.keyDown.charScan.charCode || ev.keyDown.keyCode <= kbCtrlZ) {
-                // If the character cannot be represented in the current codepage,
-                // or if it would accidentally trigger a Ctrl+Key combination,
-                // make the whole keyCode zero to avoid side effects.
-                ev.keyDown.keyCode = kbNoKey;
-            }
-        } else {
-            ev.keyDown.charScan.charCode = KeyEventW.uChar.AsciiChar;
-            if ( ev.keyDown.keyCode == 0x2A00 || ev.keyDown.keyCode == 0x1D00 ||
-                 ev.keyDown.keyCode == 0x3600 || ev.keyDown.keyCode == 0x3800 )
-                // Discard standalone Shift, Ctrl, Alt keys.
-                ev.keyDown.keyCode = kbNoKey;
-        }
-        ev.keyDown.controlKeyState = KeyEventW.dwControlKeyState;
-        // Convert NT style virtual scan codes to PC BIOS codes.
-        if ( (ev.keyDown.controlKeyState & kbCtrlShift) &&
-             (ev.keyDown.controlKeyState & kbAltShift) ) // Ctrl+Alt is AltGr
-        {
-            // When AltGr+Key does not produce a character, a
-            // keyCode with unwanted effects may be read instead.
-            if (!ev.keyDown.charScan.charCode)
-                ev.keyDown.keyCode = kbNoKey;
-        } else if (KeyEventW.wVirtualScanCode < 89) {
-            uchar index = KeyEventW.wVirtualScanCode;
-            if ((ev.keyDown.controlKeyState & kbShift) && THardwareInfo::ShiftCvt[index])
-                ev.keyDown.keyCode = THardwareInfo::ShiftCvt[index];
-            else if ((ev.keyDown.controlKeyState & kbCtrlShift) && THardwareInfo::CtrlCvt[index])
-                ev.keyDown.keyCode = THardwareInfo::CtrlCvt[index];
-            else if ((ev.keyDown.controlKeyState & kbAltShift) && THardwareInfo::AltCvt[index])
-                ev.keyDown.keyCode = THardwareInfo::AltCvt[index];
-            else if (THardwareInfo::NormalCvt[index])
-                ev.keyDown.keyCode = THardwareInfo::NormalCvt[index];
-        }
-
-        // Set/reset insert flag.
-        if (ev.keyDown.keyCode == kbIns)
-            insertState = !insertState;
-        if (insertState)
-            ev.keyDown.controlKeyState |= kbInsState;
-
-        return ev.keyDown.keyCode != kbNoKey || ev.keyDown.textLength;
-    }
-    return false;
-}
-
-bool Win32Input::getUnicodeEvent(KEY_EVENT_RECORD KeyEventW, TEvent &ev) noexcept
-// Returns true unless the event contains a UTF-16 surrogate,
-// in which case we need the next event.
-{
-    ushort utf16[2] = {KeyEventW.uChar.UnicodeChar, 0};
-    ev.keyDown.textLength = 0;
-    // Do not treat non-printable characters as text.
-    if (' ' <= utf16[0] && utf16[0] != 0x7F) {
-        if (0xD800 <= utf16[0] && utf16[0] <= 0xDBFF) {
-            surrogate = utf16[0];
-            return false;
-        } else {
-            if (surrogate) {
-                if (0xDC00 <= utf16[0] && utf16[0] <= 0xDFFF) {
-                    utf16[1] = utf16[0];
-                    utf16[0] = surrogate;
-                }
-                surrogate = 0;
-            }
-            ev.keyDown.textLength = WideCharToMultiByte(
-                CP_UTF8, 0,
-                (wchar_t*) utf16, utf16[1] ? 2 : 1,
-                ev.keyDown.text, sizeof(ev.keyDown.text),
-                nullptr, nullptr );
-        }
-    }
-    return true;
-}
-
-bool Win32Input::getMouseEvent(MOUSE_EVENT_RECORD MouseEvent, TEvent &ev) noexcept
-{
-    ev.what = evMouse;
-    ev.mouse.where.x = MouseEvent.dwMousePosition.X;
-    ev.mouse.where.y = MouseEvent.dwMousePosition.Y;
-    ev.mouse.buttons = MouseEvent.dwButtonState;
-    ev.mouse.eventFlags = MouseEvent.dwEventFlags;
-    ev.mouse.controlKeyState = MouseEvent.dwControlKeyState;
-
-    // Rotation sense is represented by the sign of dwButtonState's high word
-    Boolean positive = !(MouseEvent.dwButtonState & 0x80000000);
-    if( MouseEvent.dwEventFlags & MOUSE_WHEELED )
-        ev.mouse.wheel = positive ? mwUp : mwDown;
-    else if( MouseEvent.dwEventFlags & MOUSE_HWHEELED )
-        ev.mouse.wheel = positive ? mwRight : mwLeft;
-    else
-        ev.mouse.wheel = 0;
-
-    return true;
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -290,14 +257,14 @@ bool Win32Input::getMouseEvent(MOUSE_EVENT_RECORD MouseEvent, TEvent &ev) noexce
 void Win32Display::reloadScreenInfo() noexcept
 {
     size = io.getSize();
-    // Set the buffer size to the viewport size so that the scrollbars
-    // do not become visible after resizing.
     CONSOLE_SCREEN_BUFFER_INFO sbInfo {};
     GetConsoleScreenBufferInfo(io.out(), &sbInfo);
-    // Set the cursor temporally to (0, 0) to prevent the console from crashing due to a bug.
+    // Set the cursor temporally to (0, 0) to prevent the console from crashing
+    // due to https://github.com/microsoft/terminal/issues/7511.
     auto curPos = sbInfo.dwCursorPosition;
     SetConsoleCursorPosition(io.out(), {0, 0});
-    // Resize the buffer.
+    // Make sure the buffer size matches the viewport size so that the
+    // scrollbars are not shown.
     SetConsoleScreenBufferSize(io.out(), {(short) size.x, (short) size.y});
     // Restore the cursor position (it does not matter if it is out of bounds).
     SetConsoleCursorPosition(io.out(), curPos);
@@ -360,7 +327,7 @@ void Win32Display::clearScreen() noexcept
     BYTE attr = 0x07;
     DWORD read;
     FillConsoleOutputAttribute(io.out(), attr, length, coord, &read);
-    FillConsoleOutputCharacter(io.out(), ' ', length, coord, &read);
+    FillConsoleOutputCharacterA(io.out(), ' ', length, coord, &read);
     lastAttr = attr;
 }
 
@@ -389,4 +356,148 @@ void Win32Display::lowlevelFlush() noexcept
     io.write(buf.data(), buf.size());
     buf.resize(0);
 }
+
 #endif // _WIN32
+
+/////////////////////////////////////////////////////////////////////////
+// Global functions
+
+static bool getWin32KeyText(const KEY_EVENT_RECORD &KeyEvent, TEvent &ev, InputState &state) noexcept
+// Returns true unless the event contains a UTF-16 surrogate (Windows only),
+// in which case we need the next event.
+{
+    uint32_t ch = KeyEvent.uChar.UnicodeChar;
+    ev.keyDown.textLength = 0;
+
+    // Do not treat non-printable characters as text.
+    if (' ' <= ch && ch != 0x7F)
+    {
+#ifdef _WIN32
+        if (0xD800 <= ch && ch <= 0xDBFF)
+        {
+            state.surrogate = ch;
+            return false;
+        }
+
+        wchar_t utf16[2] = {(wchar_t) ch, 0};
+        if (state.surrogate)
+        {
+            if (0xDC00 <= ch && ch <= 0xDFFF)
+            {
+                utf16[1] = (wchar_t) ch;
+                utf16[0] = state.surrogate;
+            }
+            state.surrogate = 0;
+        }
+
+        ev.keyDown.textLength = WideCharToMultiByte(
+            CP_UTF8, 0,
+            utf16, utf16[1] ? 2 : 1,
+            ev.keyDown.text, sizeof(ev.keyDown.text),
+            nullptr, nullptr
+        );
+#else
+        (void) state;
+
+        if (ch < 0xD800 || (0xDFFF < ch && ch < 0x10FFFF))
+            ev.keyDown.textLength = (uchar) utf32To8(ch, ev.keyDown.text);
+#endif // _WIN32
+    }
+    return true;
+}
+
+bool getWin32Key(const KEY_EVENT_RECORD &KeyEvent, TEvent &ev, InputState &state) noexcept
+{
+    if (!getWin32KeyText(KeyEvent, ev, state))
+        return false;
+
+    ev.what = evKeyDown;
+    ev.keyDown.charScan.scanCode = KeyEvent.wVirtualScanCode;
+    ev.keyDown.charScan.charCode = KeyEvent.uChar.AsciiChar;
+    ev.keyDown.controlKeyState = KeyEvent.dwControlKeyState & (
+        kbShift | kbCtrlShift | kbAltShift |
+        kbScrollState | kbNumState | kbCapsState | kbEnhanced
+    );
+
+    if (ev.keyDown.textLength)
+    {
+        ev.keyDown.charScan.charCode = CpTranslator::fromUtf8(ev.keyDown.getText());
+        if (KeyEvent.wVirtualKeyCode == VK_MENU)
+            // This is enabled when pasting certain characters, and it confuses
+            // applications. Clear it.
+            ev.keyDown.charScan.scanCode = 0;
+        if (!ev.keyDown.charScan.charCode || ev.keyDown.keyCode <= kbCtrlZ)
+            // If the character cannot be represented in the current codepage,
+            // or if it would accidentally trigger a Ctrl+Key combination,
+            // make the whole keyCode zero to avoid side effects.
+            ev.keyDown.keyCode = kbNoKey;
+    }
+
+    if ( ev.keyDown.keyCode == 0x2A00 || ev.keyDown.keyCode == 0x1D00 ||
+         ev.keyDown.keyCode == 0x3600 || ev.keyDown.keyCode == 0x3800 ||
+         ev.keyDown.keyCode == 0x3A00 )
+        // Discard standalone Shift, Ctrl, Alt, Caps Lock keys.
+        ev.keyDown.keyCode = kbNoKey;
+    else if ( (ev.keyDown.controlKeyState & kbCtrlShift) &&
+              (ev.keyDown.controlKeyState & kbAltShift) ) // Ctrl+Alt is AltGr.
+    {
+        // When AltGr+Key does not produce a character, a
+        // keyCode with unwanted effects may be read instead.
+        if (!ev.keyDown.textLength)
+            ev.keyDown.keyCode = kbNoKey;
+    }
+    else if (KeyEvent.wVirtualScanCode < 89)
+    {
+        // Convert NT style virtual scan codes to PC BIOS codes.
+        uchar index = KeyEvent.wVirtualScanCode;
+        ushort keyCode = 0;
+        if ((ev.keyDown.controlKeyState & kbAltShift) && THardwareInfo::AltCvt[index])
+            keyCode = THardwareInfo::AltCvt[index];
+        else if ((ev.keyDown.controlKeyState & kbCtrlShift) && THardwareInfo::CtrlCvt[index])
+            keyCode = THardwareInfo::CtrlCvt[index];
+        else if ((ev.keyDown.controlKeyState & kbShift) && THardwareInfo::ShiftCvt[index])
+            keyCode = THardwareInfo::ShiftCvt[index];
+        else if ( !(ev.keyDown.controlKeyState & (kbShift | kbCtrlShift | kbAltShift)) &&
+                  THardwareInfo::NormalCvt[index] )
+            keyCode = THardwareInfo::NormalCvt[index];
+
+        if (keyCode != 0)
+        {
+            ev.keyDown.keyCode = keyCode;
+            if (ev.keyDown.charScan.charCode < ' ')
+                ev.keyDown.textLength = 0;
+            else if (ev.keyDown.charScan.charCode < 0x7F && !ev.keyDown.textLength)
+            {
+                ev.keyDown.text[0] = ev.keyDown.charScan.charCode;
+                ev.keyDown.textLength = 1;
+            }
+        }
+    }
+
+    return ev.keyDown.keyCode != kbNoKey || ev.keyDown.textLength;
+}
+
+void getWin32Mouse(const MOUSE_EVENT_RECORD &MouseEvent, TEvent &ev, InputState &state) noexcept
+{
+    ev.what = evMouse;
+    ev.mouse.where.x = MouseEvent.dwMousePosition.X;
+    ev.mouse.where.y = MouseEvent.dwMousePosition.Y;
+    ev.mouse.buttons = state.buttons = MouseEvent.dwButtonState;
+    ev.mouse.eventFlags = MouseEvent.dwEventFlags;
+    ev.mouse.controlKeyState = MouseEvent.dwControlKeyState & (
+        kbShift | kbCtrlShift | kbAltShift |
+        kbScrollState | kbNumState | kbCapsState | kbEnhanced
+    );
+
+    // Rotation sense is represented by the sign of dwButtonState's high word
+    Boolean positive = !(MouseEvent.dwButtonState & 0x80000000);
+    if( MouseEvent.dwEventFlags & MOUSE_WHEELED )
+        ev.mouse.wheel = positive ? mwUp : mwDown;
+    else if( MouseEvent.dwEventFlags & MOUSE_HWHEELED )
+        ev.mouse.wheel = positive ? mwRight : mwLeft;
+    else
+        ev.mouse.wheel = 0;
+}
+
+} // namespace tvision
+

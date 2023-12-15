@@ -5,44 +5,75 @@
 #define Uses_TEvent
 #include <tvision/tv.h>
 
+#include <tvision/compat/windows/windows.h>
+
+namespace tvision
+{
+
 class StdioCtl;
 
-struct MouseState
+struct Far2lState
 {
-    TPoint where;
-    uchar buttons;
-    uchar wheel;
-    uchar mods;
+    bool enabled {false};
+};
+
+struct InputState
+{
+    uchar buttons {0};
+#ifdef _WIN32
+    wchar_t surrogate {0};
+#endif
+    Far2lState far2l;
+    bool hasFullOsc52 {false};
+    bool bracketedPaste {false};
+    bool gotDsrResponse {false};
+    void (*putPaste)(TStringView) {nullptr};
+};
+
+class InputGetter
+{
+public:
+
+    virtual int get() noexcept = 0;
+    virtual void unget(int) noexcept = 0;
 };
 
 class GetChBuf
 {
-    enum { maxSize = 63 };
+    enum { maxSize = 31 };
 
     uint size {0};
     int keys[maxSize];
 
-protected:
-
-    virtual int do_getch() noexcept = 0;
-    virtual bool do_ungetch(int) noexcept = 0;
-
 public:
 
-    int get(bool keepErr) noexcept;
-    int last(size_t i) noexcept;
-    void unget() noexcept;
+    InputGetter &in;
+
+    GetChBuf(InputGetter &aIn) noexcept :
+        in(aIn)
+    {
+    }
+
+    inline int getUnbuffered() noexcept;
+    inline int get(bool keepErr = false) noexcept;
+    inline int last(size_t i) noexcept;
+    inline void unget() noexcept;
     void reject() noexcept;
     bool getNum(uint &) noexcept;
     bool getInt(int &) noexcept;
-
+    bool readStr(TStringView) noexcept;
 };
 
-inline int GetChBuf::get(bool keepErr=false) noexcept
+inline int GetChBuf::getUnbuffered() noexcept
+{
+    return in.get();
+}
+
+inline int GetChBuf::get(bool keepErr) noexcept
 {
     if (size < maxSize)
     {
-        int k = do_getch();
+        int k = in.get();
         if (keepErr || k != -1)
             keys[size++] = k;
         return k;
@@ -61,50 +92,7 @@ inline void GetChBuf::unget() noexcept
 {
     int k;
     if (size && (k = keys[--size]) != -1)
-        do_ungetch(k);
-}
-
-inline void GetChBuf::reject() noexcept
-{
-    while (size)
-        unget();
-}
-
-// getNum, getInt: INVARIANT: the last non-digit read key (or -1)
-// can be accessed with 'last()' and can also be ungetted.
-
-inline bool GetChBuf::getNum(uint &result) noexcept
-{
-    uint num = 0, digits = 0;
-    int k;
-    while ((k = get(true)) != -1 && '0' <= k && k <= '9')
-    {
-        num = 10 * num + (k - '0');
-        ++digits;
-    }
-    if (digits)
-        return (result = num), true;
-    return false;
-}
-
-inline bool GetChBuf::getInt(int &result) noexcept
-{
-    int num = 0, digits = 0, sign = 1;
-    int k = get(true);
-    if (k == '-')
-    {
-        sign = -1;
-        k = get(true);
-    }
-    while (k != -1 && '0' <= k && k <= '9')
-    {
-        num = 10 * num + (k - '0');
-        ++digits;
-        k = get(true);
-    }
-    if (digits)
-        return (result = sign*num), true;
-    return false;
+        in.unget(k);
 }
 
 enum ParseResult { Rejected = 0, Accepted, Ignored };
@@ -112,56 +100,54 @@ enum ParseResult { Rejected = 0, Accepted, Ignored };
 struct CSIData
 {
     // Represents the data stored in a CSI escape sequence:
-    // \x1B [ val[0] sep[0] val[1] sep[1] ...
+    // \x1B [ _val[0] ; _val[1] ; ... terminator
 
     // CSIs can be longer, but this is the largest we need for now.
-    enum { maxLength = 3 };
+    enum { maxLength = 6 };
 
-    uint val[maxLength];
-    uint sep[maxLength];
-    uint length;
+    uint _val[maxLength];
+    uint terminator {0};
+    uint length {0};
 
-    bool readFrom(GetChBuf &buf) noexcept
-    {
-        length = 0;
-        for (uint i = 0; i < maxLength; ++i)
-        {
-            if (!buf.getNum(val[i]))
-                val[i] = 1;
-            int k = buf.last();
-            if (k == -1) return false;
-            if ((sep[i] = (uint) k) != ';')
-                return (length = i + 1), true;
-        }
-        return false;
-    }
-
-    uint terminator() const noexcept
-    {
-        return length ? sep[length - 1] : 0;
-    }
+    bool readFrom(GetChBuf &buf) noexcept;
+    inline uint getValue(uint i, uint defaultValue = 1) const noexcept;
 };
+
+inline uint CSIData::getValue(uint i, uint defaultValue) const noexcept
+{
+    return i < length && _val[i] != UINT_MAX ? _val[i] : defaultValue;
+}
 
 namespace TermIO
 {
+    void mouseOn(StdioCtl &) noexcept;
+    void mouseOff(StdioCtl &) noexcept;
+    void keyModsOn(StdioCtl &) noexcept;
+    void keyModsOff(StdioCtl &) noexcept;
 
-    void mouseOn(const StdioCtl &) noexcept;
-    void mouseOff(const StdioCtl &) noexcept;
-    void keyModsOn(const StdioCtl &) noexcept;
-    void keyModsOff(const StdioCtl &) noexcept;
+    void normalizeKey(KeyDownEvent &keyDown) noexcept;
 
-    ParseResult parseEscapeSeq(GetChBuf&, TEvent&, MouseState&) noexcept;
-    ParseResult parseX10Mouse(GetChBuf&, TEvent&, MouseState&) noexcept;
-    ParseResult parseSGRMouse(GetChBuf&, TEvent&, MouseState&) noexcept;
-    ParseResult parseCSIKey(const CSIData &csi, TEvent&) noexcept;
+    bool setClipboardText(StdioCtl &, TStringView, InputState &) noexcept;
+    bool requestClipboardText(StdioCtl &, void (&)(TStringView), InputState &) noexcept;
+
+    ParseResult parseEvent(GetChBuf&, TEvent&, InputState&) noexcept;
+    ParseResult parseEscapeSeq(GetChBuf&, TEvent&, InputState&) noexcept;
+    ParseResult parseX10Mouse(GetChBuf&, TEvent&, InputState&) noexcept;
+    ParseResult parseSGRMouse(GetChBuf&, TEvent&, InputState&) noexcept;
+    ParseResult parseCSIKey(const CSIData &csi, TEvent&, InputState&) noexcept;
     ParseResult parseFKeyA(GetChBuf&, TEvent&) noexcept;
     ParseResult parseSS3Key(GetChBuf&, TEvent&) noexcept;
     ParseResult parseArrowKeyA(GetChBuf&, TEvent&) noexcept;
     ParseResult parseFixTermKey(const CSIData &csi, TEvent&) noexcept;
+    ParseResult parseDCS(GetChBuf&, InputState&) noexcept;
+    ParseResult parseOSC(GetChBuf&, InputState&) noexcept;
+    ParseResult parseCPR(const CSIData &csi, InputState&) noexcept;
+    ParseResult parseWin32InputModeKeyOrEscapeSeq(const CSIData &, InputGetter&, TEvent&, InputState&) noexcept;
 
-    bool acceptMouseEvent(TEvent &ev, MouseState &oldm, const MouseState &newm) noexcept;
-    void setAltModifier(KeyDownEvent &keyDown) noexcept;
-
+    char *readUntilBelOrSt(GetChBuf &) noexcept;
+    void consumeUnprocessedInput(StdioCtl &, InputGetter &, InputState &) noexcept;
 }
+
+} // namespace tvision
 
 #endif // TVISION_TERMINAL_H

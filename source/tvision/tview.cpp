@@ -19,6 +19,7 @@
 #define Uses_TGroup
 #define Uses_TRect
 #define Uses_TEvent
+#define Uses_TProgram
 #define Uses_opstream
 #define Uses_ipstream
 #include <tvision/tv.h>
@@ -95,7 +96,7 @@ static int balancedRange( int val, int min, int max, int &balance) noexcept
     // and apply them back when possible. This allows views to recover
     // their original sizes.
     if( min > max )
-        min = max;
+        max = min;
     if( val < min )
         {
         balance += val - min;
@@ -114,7 +115,7 @@ static int balancedRange( int val, int min, int max, int &balance) noexcept
         }
 }
 
-static inline void fitToLimits( int a, int b, int min, int max, int &balance)
+static inline void fitToLimits( int a, int &b, int min, int max, int &balance)
 {
     b = a + balancedRange( b - a, min, max, balance );
 }
@@ -220,7 +221,7 @@ void TView::moveGrow( TPoint p,
     locate(r);
 }
 
-void TView::change( uchar mode, TPoint delta, TPoint& p, TPoint& s, ulong ctrlState ) noexcept
+void TView::change( uchar mode, TPoint delta, TPoint& p, TPoint& s, ushort ctrlState ) noexcept
 {
     if( (mode & dmDragMove) != 0 && (ctrlState & kbShift) == 0 )
         p += delta;
@@ -505,6 +506,16 @@ void TView::getEvent( TEvent& event )
         owner->getEvent(event);
 }
 
+void TView::getEvent( TEvent& event, int timeoutMs )
+{
+    int saveTimeout = TProgram::eventTimeout;
+    TProgram::eventTimeout = timeoutMs;
+
+    getEvent( event );
+
+    TProgram::eventTimeout = saveTimeout;
+}
+
 TRect TView::getExtent() const noexcept
 {
     return TRect( 0, 0, size.x, size.y );
@@ -561,6 +572,12 @@ void TView::keyEvent( TEvent& event )
     do {
        getEvent(event);
        } while( event.what != evKeyDown );
+}
+
+void TView::killTimer( TTimerId id )
+{
+    if( owner != 0 )
+        owner->killTimer(id);
 }
 
 void TView::locate( TRect& bounds )
@@ -788,6 +805,13 @@ void TView::setState( ushort aState, Boolean enable )
         }
 }
 
+TTimerId TView::setTimer( uint timeoutMs, int periodMs )
+{
+    if( owner != 0 )
+        return owner->setTimer(timeoutMs, periodMs);
+    return 0;
+}
+
 void TView::show()
 {
     if( (state & sfVisible) == 0 )
@@ -808,11 +832,45 @@ void TView::sizeLimits( TPoint& min, TPoint& max )
         max.x = max.y = INT_MAX;
 }
 
-Boolean TView::textEvent( TEvent &event, TSpan<char> dest, size_t &length )
+static Boolean getEventText( TEvent &event, TSpan<char> dest, size_t &length )
 {
-    if( owner )
-        return owner->textEvent( event, dest, length );
+    if( event.what == evKeyDown )
+        {
+        TStringView text = event.keyDown.textLength         ? event.keyDown.getText()
+                         : event.keyDown.keyCode == kbEnter ? TStringView("\n")
+                         : event.keyDown.keyCode == kbTab   ? TStringView("\t")
+                                                            : TStringView();
+        TSpan<char> dst = dest.subspan( length );
+        if( !text.empty() && text.size() <= dst.size() )
+            {
+            memcpy( dst.data(), text.data(), text.size() );
+            length += text.size();
+            return True;
+            }
+        }
     return False;
+}
+
+Boolean TView::textEvent( TEvent& event, TSpan<char> dest, size_t &length )
+// Fill the 'dest' buffer with text from consecutive events.
+// If 'event' is an evKeyDown, its text is also included in 'dest'.
+// 'length' is set to the number of bytes written into 'dest'.
+// Returns whether any bytes were written into 'dest'.
+// On exit, 'event.what' is evNothing.
+{
+    length = 0;
+
+    getEventText( event, dest, length );
+    do  {
+        int timeoutMs = 0;
+        getEvent( event, timeoutMs );
+        } while( getEventText( event, dest, length ) );
+
+    if( event.what != evNothing )
+        putEvent( event );
+    clearEvent( event );
+
+    return Boolean( length != 0 );
 }
 
 TView* TView::TopView() noexcept

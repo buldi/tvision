@@ -41,38 +41,6 @@ inline TColorAttr reverseAttribute(TColorAttr attr)
 
 #include <string.h>
 
-// Helper class for trivial types.
-
-namespace colors
-{
-
-    template<class T, T mask = static_cast<T>(-1)>
-    struct alignas(T) trivially_convertible
-    {
-
-        using trivial_t = T;
-
-        // If you want the derived classes to be trivial, make sure you also
-        // define a trivial default constructor in them.
-        trivially_convertible() = default;
-
-        trivially_convertible(T asT)
-        {
-            asT &= mask;
-            memcpy(this, &asT, sizeof(T));
-        }
-
-        operator T() const
-        {
-            T asT;
-            memcpy(&asT, this, sizeof(T));
-            return asT & mask;
-        }
-
-    };
-
-} // namespace colors
-
 //// Color Formats
 
 ////// TColorRGB
@@ -86,7 +54,7 @@ namespace colors
 // When doing so, the unused bits are discarded:
 //     uint32_t(TColorRGB(0xAABBCCDD)) == 0xBBCCDD;
 
-struct TColorRGB : colors::trivially_convertible<uint32_t, 0xFFFFFF>
+struct TColorRGB
 {
     uint32_t
         b       : 8,
@@ -94,8 +62,7 @@ struct TColorRGB : colors::trivially_convertible<uint32_t, 0xFFFFFF>
         r       : 8,
         _unused : 8;
 
-    using trivially_convertible::trivially_convertible;
-    TColorRGB() = default;
+    TV_TRIVIALLY_CONVERTIBLE(TColorRGB, uint32_t, 0xFFFFFF)
     constexpr inline TColorRGB(uint8_t r, uint8_t g, uint8_t b);
 };
 
@@ -120,7 +87,7 @@ constexpr inline TColorRGB::TColorRGB(uint8_t r, uint8_t g, uint8_t b) :
 // When doing so, the unused bits are discarded:
 //     uint8_t(TColorBIOS(0xAB)) == 0xB;
 
-struct TColorBIOS : colors::trivially_convertible<uint8_t, 0xF>
+struct TColorBIOS
 {
     uint8_t
         b       : 1,
@@ -129,8 +96,7 @@ struct TColorBIOS : colors::trivially_convertible<uint8_t, 0xF>
         bright  : 1,
         _unused : 4;
 
-    using trivially_convertible::trivially_convertible;
-    TColorBIOS() = default;
+    TV_TRIVIALLY_CONVERTIBLE(TColorBIOS, uint8_t, 0xF)
 };
 
 ////// TColorXTerm
@@ -148,12 +114,11 @@ struct TColorBIOS : colors::trivially_convertible<uint8_t, 0xF>
 //     TColorXTerm xterm = 0xFE;
 //     uint8_t asChar = xterm;
 
-struct TColorXTerm : colors::trivially_convertible<uint8_t>
+struct TColorXTerm
 {
     uint8_t idx;
 
-    using trivially_convertible::trivially_convertible;
-    TColorXTerm() = default;
+    TV_TRIVIALLY_CONVERTIBLE(TColorXTerm, uint8_t, 0xFF)
 };
 
 //// Color Conversion Functions
@@ -180,12 +145,12 @@ inline TColorBIOS XTerm16toBIOS(uint8_t);
 inline TColorRGB XTerm256toRGB(uint8_t); // Only for indices 16..255.
 inline uint8_t XTerm256toXTerm16(uint8_t);
 
-namespace detail
+namespace tvision
 {
     template <class T, size_t N>
     struct constarray;
 
-    uint8_t RGBtoXTerm16(TColorRGB) noexcept;
+    uint8_t RGBtoXTerm16Impl(TColorRGB) noexcept;
     extern const constarray<uint8_t, 256> XTerm256toXTerm16LUT;
     extern const constarray<uint32_t, 256> XTerm256toRGBLUT;
 }
@@ -206,7 +171,8 @@ inline TColorBIOS RGBtoBIOS(TColorRGB c)
 
 inline uint8_t RGBtoXTerm16(TColorRGB c)
 {
-    return detail::RGBtoXTerm16(c);
+    using namespace tvision;
+    return RGBtoXTerm16Impl(c);
 }
 
 inline uint8_t RGBtoXTerm256(TColorRGB c)
@@ -273,13 +239,13 @@ inline TColorBIOS XTerm16toBIOS(uint8_t idx)
 
 inline uint8_t XTerm256toXTerm16(uint8_t idx)
 {
-    using namespace detail;
+    using namespace tvision;
     return ((const uint8_t (&) [256]) XTerm256toXTerm16LUT)[idx];
 }
 
 inline TColorRGB XTerm256toRGB(uint8_t idx)
 {
-    using namespace detail;
+    using namespace tvision;
     return ((const uint32_t (&) [256]) XTerm256toRGBLUT)[idx];
 }
 
@@ -317,7 +283,7 @@ struct TColorDesired
     constexpr inline TColorDesired(char bios);   // e.g. {'\xF'}
     constexpr inline TColorDesired(uchar bios);
     constexpr inline TColorDesired(int rgb);     // e.g. {0x7F00BB}
-    // Use zero-initialization for for type Default: {}
+    // Use zero-initialization for type Default: {}
 
     // Constructors with explicit type names.
 
@@ -559,8 +525,7 @@ constexpr inline TColorAttr::TColorAttr(TColorDesired fg, TColorDesired bg, usho
 
 inline bool TColorAttr::isBIOS() const
 {
-    return ::getFore(*this).isBIOS() & ::getBack(*this).isBIOS()
-            & !::getStyle(*this);
+    return (int) ::getFore(*this).isBIOS() & ::getBack(*this).isBIOS() & !::getStyle(*this);
 }
 
 inline uchar TColorAttr::asBIOS() const
@@ -644,7 +609,7 @@ constexpr inline TColorAttr reverseAttribute(TColorAttr attr)
          bg = ::getBack(attr);
     // The 'slReverse' attribute is represented differently by every terminal,
     // so it is better to swap the colors manually unless any of them is default.
-    if (fg.isDefault() | bg.isDefault())
+    if ((int) fg.isDefault() | bg.isDefault())
         ::setStyle(attr, ::getStyle(attr) ^ slReverse);
     else
     {

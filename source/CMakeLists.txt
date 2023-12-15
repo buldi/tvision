@@ -13,24 +13,11 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     "$<INSTALL_INTERFACE:include>"
 )
 
-function(tv_add_private_includes target)
-    target_include_directories(${target} PRIVATE
-        "${PROJECT_SOURCE_DIR}/include/tvision"
-        "${PROJECT_SOURCE_DIR}/include/tvision/compat"
-    )
-    if (NOT WIN32 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux"))
-        target_include_directories(${target} PRIVATE
-            "${PROJECT_SOURCE_DIR}/include/tvision/compat/malloc"
-        )
-    endif()
-endfunction()
-
 tv_add_private_includes(${PROJECT_NAME})
 tv_set_warnings(${PROJECT_NAME})
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(${PROJECT_NAME} PUBLIC
-        /wd4068 # Unrecognized pragmas
         /permissive-
         /Zc:__cplusplus
         /Zc:externConstexpr
@@ -45,10 +32,6 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         )
     endif()
 else()
-    target_compile_options(${PROJECT_NAME} PUBLIC
-        -Wno-unknown-pragmas
-        -Wno-pragmas
-    )
     if (TV_REDUCE_APP_SIZE) # Implies CMake >= 3.13.0
         target_compile_options(${PROJECT_NAME} PRIVATE
             -fdata-sections -ffunction-sections
@@ -71,7 +54,7 @@ endforeach()
 
 if (TV_USE_STATIC_RTL) # Implies MSVC
     target_compile_options(${PROJECT_NAME} PUBLIC
-        /MT$<$<CONFIG:Debug>:d>
+        /MT$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:d>
     )
 endif()
 
@@ -79,6 +62,10 @@ if (WIN32)
     target_compile_definitions(${PROJECT_NAME} PUBLIC
         _CRT_NONSTDC_NO_WARNINGS
         _CRT_SECURE_NO_WARNINGS
+    )
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        # Windows Vista is the minimum supported version.
+        _WIN32_WINNT=0x0600
     )
 endif()
 

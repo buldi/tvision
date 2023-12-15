@@ -25,12 +25,8 @@
 #include "tvedit.h"
 
 #include <stdlib.h>
-#include <stdarg.h>
 #include <strstrea.h>
 #include <iomanip.h>
-#include <signal.h>
-
-TEditWindow *clipWindow;
 
 TEditWindow *TEditorApp::openEditor( const char *fileName, Boolean visible )
 {
@@ -64,12 +60,6 @@ TEditorApp::TEditorApp( int argc, char **argv ) :
     disableCommands( ts );
 
     TEditor::editorDialog = doEditDialog;
-    clipWindow = openEditor( 0, False );
-    if( clipWindow != 0 )
-        {
-        TEditor::clipboard = clipWindow->editor;
-        TEditor::clipboard->canUndo = False;
-        }
 
     while (--argc > 0)                              // Open files specified
         openEditor(*++argv, True);                  // on command line.
@@ -96,12 +86,6 @@ void TEditorApp::changeDir()
     execDialog( new TChDirDialog( cdNormal, 0 ), 0 );
 }
 
-void TEditorApp::showClip()
-{
-    clipWindow->select();
-    clipWindow->show();
-}
-
 void TEditorApp::handleEvent( TEvent& event )
 {
     TApplication::handleEvent( event );
@@ -120,10 +104,6 @@ void TEditorApp::handleEvent( TEvent& event )
 
             case cmChangeDrct:
                 changeDir();
-                break;
-
-            case cmShowClip:
-                showClip();
                 break;
 
             default:

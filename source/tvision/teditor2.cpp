@@ -53,7 +53,7 @@ static int getCharType( char ch )
     return 3;
 }
 
-static inline Boolean isWordBoundary( char a, char b )
+static inline int isWordBoundary( char a, char b )
 {
     return getCharType(a) != getCharType(b);
 }
@@ -115,21 +115,20 @@ TMenuItem& TEditor::initContextMenu( TPoint )
         *new TMenuItem( "~U~ndo", cmUndo, kbCtrlU, hcNoContext, "Ctrl-U" );
 }
 
-uint TEditor::insertAndConvertText( const char *text, uint length,
-                                    Boolean selectText )
+uint TEditor::insertMultilineText( const char *text, uint length )
 {
     size_t i = 0, j = 0;
     do  {
-        if( text[i] == '\n' )
+        if( text[i] == '\n' || text[i] == '\r' )
             {
-            if( !insertText( &text[j], i - j, selectText ) ) return j;
-            if( !insertEOL( selectText ) ) return i;
-            if( i + 1 < length && text[i + 1] == '\r' )
+            if( !insertText( &text[j], i - j, False ) ) return j;
+            if( !insertEOL( False ) ) return i;
+            if( i + 1 < length && text[i] == '\r' && text[i + 1] == '\n' )
                 ++i;
             j = i + 1;
             }
         } while( ++i < length );
-    if( !insertText( &text[j], i - j, selectText ) ) return j;
+    if( !insertText( &text[j], i - j, False ) ) return j;
     return i;
 }
 
@@ -556,9 +555,9 @@ void TEditor::startSelect()
 
 void TEditor::toggleEncoding()
 {
-    encSingleByte = !encSingleByte;
+    encSingleByte = Boolean( !encSingleByte );
     updateFlags |= ufView;
-    setSelect(selStart, selEnd, curPtr < selEnd);
+    setSelect(selStart, selEnd, Boolean( curPtr < selEnd ));
 }
 
 void TEditor::toggleInsMode()
@@ -611,10 +610,10 @@ void TEditor::updateCommands()
     setCmdState( cmUndo, Boolean( delCount != 0 || insCount != 0 ) );
     if( isClipboard() == False )
         {
-        setCmdState(cmCut, Boolean(clipboard != 0 && hasSelection()));
-        setCmdState(cmCopy, Boolean(clipboard != 0 && hasSelection()));
+        setCmdState(cmCut, hasSelection());
+        setCmdState(cmCopy, hasSelection());
         setCmdState(cmPaste,
-                    Boolean(clipboard != 0 && (clipboard->hasSelection())) );
+                    Boolean(clipboard == 0 || clipboard->hasSelection()) );
         }
     setCmdState(cmClear, hasSelection());
     setCmdState(cmFind, True);

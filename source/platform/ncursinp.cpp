@@ -13,6 +13,13 @@
 #include <internal/codepage.h>
 #include <internal/constmap.h>
 #include <string>
+#include <chrono>
+
+using std::chrono::milliseconds;
+using std::chrono::steady_clock;
+
+namespace tvision
+{
 
 /* Turbo Vision is designed to work with BIOS key codes. Mnemonics for some
  * key codes are defined in tkeys.h. Unless those are changed, it is
@@ -44,42 +51,44 @@
  * Still, it's up to your luck that ncurses manages to grab any of these
  * combinations from your terminal application. */
 
-static constexpr KeyDownEvent fromNonPrintableAscii[32] = {
-    {{kbNoKey},     0}          , // ^@, Null
-    {{kbCtrlA},     kbCtrlShift},
-    {{kbCtrlB},     kbCtrlShift},
-    {{kbCtrlC},     kbCtrlShift},
-    {{kbCtrlD},     kbCtrlShift},
-    {{kbCtrlE},     kbCtrlShift},
-    {{kbCtrlF},     kbCtrlShift},
-    {{kbCtrlG},     kbCtrlShift},
-    {{kbBack},      0}          , // ^H, Backspace
-    {{kbTab},       0}          , // ^I, Tab
-    {{kbEnter},     0}          , // ^J, Line Feed
-    {{kbCtrlK},     kbCtrlShift},
-    {{kbCtrlL},     kbCtrlShift},
-    {{kbEnter},     0}          , // ^M, Carriage Return
-    {{kbCtrlN},     kbCtrlShift},
-    {{kbCtrlO},     kbCtrlShift},
-    {{kbCtrlP},     kbCtrlShift},
-    {{kbCtrlQ},     kbCtrlShift},
-    {{kbCtrlR},     kbCtrlShift},
-    {{kbCtrlS},     kbCtrlShift},
-    {{kbCtrlT},     kbCtrlShift},
-    {{kbCtrlU},     kbCtrlShift},
-    {{kbCtrlV},     kbCtrlShift},
-    {{kbCtrlW},     kbCtrlShift},
-    {{kbCtrlX},     kbCtrlShift},
-    {{kbCtrlY},     kbCtrlShift},
-    {{kbCtrlZ},     kbCtrlShift},
-    {{kbEsc},       0}          , // ^[, Escape
-    {{0x1C},        0}          , // ^\, ?
-    {{0x1D},        0}          , // ^], ?
-    {{0x1E},        0}          , // ^^, ?
-    {{0x1F},        0}          , // ^_, ?
+static constexpr KeyDownEvent fromNonPrintableAscii[32] =
+{
+    {{'@'},         kbLeftCtrl, {'@'}, 1}, // ^@, Null
+    {{kbCtrlA},     kbLeftCtrl},
+    {{kbCtrlB},     kbLeftCtrl},
+    {{kbCtrlC},     kbLeftCtrl},
+    {{kbCtrlD},     kbLeftCtrl},
+    {{kbCtrlE},     kbLeftCtrl},
+    {{kbCtrlF},     kbLeftCtrl},
+    {{kbCtrlG},     kbLeftCtrl},
+    {{kbBack},      0}, // ^H, Backspace
+    {{kbTab},       0}, // ^I, Tab
+    {{kbEnter},     0}, // ^J, Line Feed
+    {{kbCtrlK},     kbLeftCtrl},
+    {{kbCtrlL},     kbLeftCtrl},
+    {{kbEnter},     0}, // ^M, Carriage Return
+    {{kbCtrlN},     kbLeftCtrl},
+    {{kbCtrlO},     kbLeftCtrl},
+    {{kbCtrlP},     kbLeftCtrl},
+    {{kbCtrlQ},     kbLeftCtrl},
+    {{kbCtrlR},     kbLeftCtrl},
+    {{kbCtrlS},     kbLeftCtrl},
+    {{kbCtrlT},     kbLeftCtrl},
+    {{kbCtrlU},     kbLeftCtrl},
+    {{kbCtrlV},     kbLeftCtrl},
+    {{kbCtrlW},     kbLeftCtrl},
+    {{kbCtrlX},     kbLeftCtrl},
+    {{kbCtrlY},     kbLeftCtrl},
+    {{kbCtrlZ},     kbLeftCtrl},
+    {{kbEsc},       0}, // ^[, Escape
+    {{'\\'},        kbLeftCtrl, {'\\'}, 1}, // ^\, File Separator
+    {{']'},         kbLeftCtrl, {']'}, 1}, // ^], Group Separator
+    {{'^'},         kbLeftCtrl, {'^'}, 1}, // ^^, Record Separator
+    {{'_'},         kbLeftCtrl, {'_'}, 1}, // ^_, Unit Separator
 };
 
-static const const_unordered_map<ushort, KeyDownEvent> fromCursesKeyCode = {
+static const const_unordered_map<ushort, KeyDownEvent> fromCursesKeyCode =
+{
     { KEY_DOWN,         {{kbDown},      0}          },
     { KEY_UP,           {{kbUp},        0}          },
     { KEY_LEFT,         {{kbLeft},      0}          },
@@ -101,7 +110,7 @@ static const const_unordered_map<ushort, KeyDownEvent> fromCursesKeyCode = {
     { KEY_SIC,          {{kbShiftIns},  kbShift}    },
     { KEY_SLEFT,        {{kbLeft},      kbShift}    },
     { KEY_SRIGHT,       {{kbRight},     kbShift}    },
-    { KEY_SUSPEND,      {{kbCtrlZ},     kbCtrlShift}},
+    { KEY_SUSPEND,      {{kbCtrlZ},     kbLeftCtrl} },
     // Avoid using these, as they are reserved by the Linux console.
     { KEY_SPREVIOUS,    {{kbPgUp},      kbShift}    },
     { KEY_SNEXT,        {{kbPgDn},      kbShift}    },
@@ -139,118 +148,132 @@ static const const_unordered_map<ushort, KeyDownEvent> fromCursesKeyCode = {
     /* Linux console support for function keys ends here, so please
      * avoid using any of the following: */
     // Ctrl+F1-F12
-    { KEY_F0 + 25,      {{kbCtrlF1},    kbCtrlShift}},
-    { KEY_F0 + 26,      {{kbCtrlF2},    kbCtrlShift}},
-    { KEY_F0 + 27,      {{kbCtrlF3},    kbCtrlShift}},
-    { KEY_F0 + 28,      {{kbCtrlF4},    kbCtrlShift}},
-    { KEY_F0 + 29,      {{kbCtrlF5},    kbCtrlShift}},
-    { KEY_F0 + 30,      {{kbCtrlF6},    kbCtrlShift}},
-    { KEY_F0 + 31,      {{kbCtrlF7},    kbCtrlShift}},
-    { KEY_F0 + 32,      {{kbCtrlF8},    kbCtrlShift}},
-    { KEY_F0 + 33,      {{kbCtrlF9},    kbCtrlShift}},
-    { KEY_F0 + 34,      {{kbCtrlF10},   kbCtrlShift}},
-    { KEY_F0 + 35,      {{kbCtrlF11},   kbCtrlShift}},
-    { KEY_F0 + 36,      {{kbCtrlF12},   kbCtrlShift}},
+    { KEY_F0 + 25,      {{kbCtrlF1},    kbLeftCtrl} },
+    { KEY_F0 + 26,      {{kbCtrlF2},    kbLeftCtrl} },
+    { KEY_F0 + 27,      {{kbCtrlF3},    kbLeftCtrl} },
+    { KEY_F0 + 28,      {{kbCtrlF4},    kbLeftCtrl} },
+    { KEY_F0 + 29,      {{kbCtrlF5},    kbLeftCtrl} },
+    { KEY_F0 + 30,      {{kbCtrlF6},    kbLeftCtrl} },
+    { KEY_F0 + 31,      {{kbCtrlF7},    kbLeftCtrl} },
+    { KEY_F0 + 32,      {{kbCtrlF8},    kbLeftCtrl} },
+    { KEY_F0 + 33,      {{kbCtrlF9},    kbLeftCtrl} },
+    { KEY_F0 + 34,      {{kbCtrlF10},   kbLeftCtrl} },
+    { KEY_F0 + 35,      {{kbCtrlF11},   kbLeftCtrl} },
+    { KEY_F0 + 36,      {{kbCtrlF12},   kbLeftCtrl} },
     // Ctrl+Shift+F1-12
-    { KEY_F0 + 37,      {{kbCtrlF1},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 38,      {{kbCtrlF2},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 39,      {{kbCtrlF3},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 40,      {{kbCtrlF4},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 41,      {{kbCtrlF5},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 42,      {{kbCtrlF6},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 43,      {{kbCtrlF7},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 44,      {{kbCtrlF8},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 45,      {{kbCtrlF9},    kbShift | kbCtrlShift}},
-    { KEY_F0 + 46,      {{kbCtrlF10},   kbShift | kbCtrlShift}},
-    { KEY_F0 + 47,      {{kbCtrlF11},   kbShift | kbCtrlShift}},
-    { KEY_F0 + 48,      {{kbCtrlF12},   kbShift | kbCtrlShift}},
+    { KEY_F0 + 37,      {{kbCtrlF1},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 38,      {{kbCtrlF2},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 39,      {{kbCtrlF3},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 40,      {{kbCtrlF4},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 41,      {{kbCtrlF5},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 42,      {{kbCtrlF6},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 43,      {{kbCtrlF7},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 44,      {{kbCtrlF8},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 45,      {{kbCtrlF9},    kbShift | kbLeftCtrl}},
+    { KEY_F0 + 46,      {{kbCtrlF10},   kbShift | kbLeftCtrl}},
+    { KEY_F0 + 47,      {{kbCtrlF11},   kbShift | kbLeftCtrl}},
+    { KEY_F0 + 48,      {{kbCtrlF12},   kbShift | kbLeftCtrl}},
     // Alt+F1-F12
-    { KEY_F0 + 49,      {{kbAltF1},     kbAltShift} },
-    { KEY_F0 + 50,      {{kbAltF2},     kbAltShift} },
-    { KEY_F0 + 51,      {{kbAltF3},     kbAltShift} },
-    { KEY_F0 + 52,      {{kbAltF4},     kbAltShift} },
-    { KEY_F0 + 53,      {{kbAltF5},     kbAltShift} },
-    { KEY_F0 + 54,      {{kbAltF6},     kbAltShift} },
-    { KEY_F0 + 55,      {{kbAltF7},     kbAltShift} },
-    { KEY_F0 + 56,      {{kbAltF8},     kbAltShift} },
-    { KEY_F0 + 57,      {{kbAltF9},     kbAltShift} },
-    { KEY_F0 + 58,      {{kbAltF10},    kbAltShift} },
-    { KEY_F0 + 59,      {{kbAltF11},    kbAltShift} },
-    { KEY_F0 + 60,      {{kbAltF12},    kbAltShift} }
+    { KEY_F0 + 49,      {{kbAltF1},     kbLeftAlt}  },
+    { KEY_F0 + 50,      {{kbAltF2},     kbLeftAlt}  },
+    { KEY_F0 + 51,      {{kbAltF3},     kbLeftAlt}  },
+    { KEY_F0 + 52,      {{kbAltF4},     kbLeftAlt}  },
+    { KEY_F0 + 53,      {{kbAltF5},     kbLeftAlt}  },
+    { KEY_F0 + 54,      {{kbAltF6},     kbLeftAlt}  },
+    { KEY_F0 + 55,      {{kbAltF7},     kbLeftAlt}  },
+    { KEY_F0 + 56,      {{kbAltF8},     kbLeftAlt}  },
+    { KEY_F0 + 57,      {{kbAltF9},     kbLeftAlt}  },
+    { KEY_F0 + 58,      {{kbAltF10},    kbLeftAlt}  },
+    { KEY_F0 + 59,      {{kbAltF11},    kbLeftAlt}  },
+    { KEY_F0 + 60,      {{kbAltF12},    kbLeftAlt}  }
 };
 
 static const auto fromCursesHighKey =
     const_unordered_map<uint64_t, KeyDownEvent>::with_string_keys({
     /* These keys are identified by name. The int value is not known
      * at compilation time. */
-    { "kDC3",       {{kbAltDel},        kbAltShift}},
-    { "kEND3",      {{kbAltEnd},        kbAltShift}},
-    { "kHOM3",      {{kbAltHome},       kbAltShift}},
-    { "kIC3",       {{kbAltIns},        kbAltShift}},
-    { "kLFT3",      {{kbAltLeft},       kbAltShift}},
-    { "kNXT3",      {{kbAltPgDn},       kbAltShift}},
-    { "kPRV3",      {{kbAltPgUp},       kbAltShift}},
-    { "kRIT3",      {{kbAltRight},      kbAltShift}},
-    { "kUP3",       {{kbAltUp},         kbAltShift}},
-    { "kDN3",       {{kbAltDown},       kbAltShift}},
-    { "kDC4",       {{kbAltDel},        kbShift | kbAltShift}},
-    { "kEND4",      {{kbAltEnd},        kbShift | kbAltShift}},
-    { "kHOM4",      {{kbAltHome},       kbShift | kbAltShift}},
-    { "kIC4",       {{kbAltIns},        kbShift | kbAltShift}},
-    { "kLFT4",      {{kbAltLeft},       kbShift | kbAltShift}},
-    { "kNXT4",      {{kbAltPgDn},       kbShift | kbAltShift}},
-    { "kPRV4",      {{kbAltPgUp},       kbShift | kbAltShift}},
-    { "kRIT4",      {{kbAltRight},      kbShift | kbAltShift}},
-    { "kUP4",       {{kbAltUp},         kbShift | kbAltShift}},
-    { "kDN4",       {{kbAltDown},       kbShift | kbAltShift}},
-    { "kDC5",       {{kbCtrlDel},       kbCtrlShift}},
-    { "kEND5",      {{kbCtrlEnd},       kbCtrlShift}},
-    { "kHOM5",      {{kbCtrlHome},      kbCtrlShift}},
-    { "kIC5",       {{kbCtrlIns},       kbCtrlShift}},
-    { "kLFT5",      {{kbCtrlLeft},      kbCtrlShift}},
-    { "kNXT5",      {{kbCtrlPgDn},      kbCtrlShift}},
-    { "kPRV5",      {{kbCtrlPgUp},      kbCtrlShift}},
-    { "kRIT5",      {{kbCtrlRight},     kbCtrlShift}},
-    { "kUP5",       {{kbCtrlUp},        kbCtrlShift}},
-    { "kDN5",       {{kbCtrlDown},      kbCtrlShift}},
-    { "kDC6",       {{kbCtrlDel},       kbCtrlShift | kbShift}},
-    { "kEND6",      {{kbCtrlEnd},       kbCtrlShift | kbShift}},
-    { "kHOM6",      {{kbCtrlHome},      kbCtrlShift | kbShift}},
-    { "kIC6",       {{kbCtrlIns},       kbCtrlShift | kbShift}},
-    { "kLFT6",      {{kbCtrlLeft},      kbCtrlShift | kbShift}},
-    { "kNXT6",      {{kbCtrlPgDn},      kbCtrlShift | kbShift}},
-    { "kPRV6",      {{kbCtrlPgUp},      kbCtrlShift | kbShift}},
-    { "kRIT6",      {{kbCtrlRight},     kbCtrlShift | kbShift}},
-    { "kUP6",       {{kbCtrlUp},        kbCtrlShift | kbShift}},
-    { "kDN6",       {{kbCtrlDown},      kbCtrlShift | kbShift}},
-    { "kDC7",       {{kbAltDel},        kbCtrlShift | kbAltShift}}, // Please do not attempt this one
-    { "kEND7",      {{kbAltEnd},        kbCtrlShift | kbAltShift}},
-    { "kHOM7",      {{kbAltHome},       kbCtrlShift | kbAltShift}},
-    { "kIC7",       {{kbAltIns},        kbCtrlShift | kbAltShift}},
-    { "kLFT7",      {{kbAltLeft},       kbCtrlShift | kbAltShift}},
-    { "kNXT7",      {{kbAltPgDn},       kbCtrlShift | kbAltShift}},
-    { "kPRV7",      {{kbAltPgUp},       kbCtrlShift | kbAltShift}},
-    { "kRIT7",      {{kbAltRight},      kbCtrlShift | kbAltShift}},
-    { "kUP7",       {{kbAltUp},         kbCtrlShift | kbAltShift}},
-    { "kDN7",       {{kbAltDown},       kbCtrlShift | kbAltShift}},
-    { "kpCMA",      {{'+'},             0, {'+'}, 1}},
-    { "kpADD",      {{'+'},             0, {'+'}, 1}},
-    { "kpSUB",      {{'-'},             0, {'-'}, 1}},
-    { "kpMUL",      {{'*'},             0, {'*'}, 1}},
-    { "kpDIV",      {{'/'},             0, {'/'}, 1}},
-    { "kpZRO",      {{'0'},             0, {'0'}, 1}},
-    { "kpDOT",      {{'.'},             0, {'.'}, 1}},
-    { "ka2",        {{kbUp},            0}},
-    { "kb1",        {{kbLeft},          0}},
-    { "kb3",        {{kbRight},         0}},
-    { "kc2",        {{kbDown},          0}},
+    { "kDC3",       {{kbAltDel},        kbLeftAlt} },
+    { "kEND3",      {{kbAltEnd},        kbLeftAlt} },
+    { "kHOM3",      {{kbAltHome},       kbLeftAlt} },
+    { "kIC3",       {{kbAltIns},        kbLeftAlt} },
+    { "kLFT3",      {{kbAltLeft},       kbLeftAlt} },
+    { "kNXT3",      {{kbAltPgDn},       kbLeftAlt} },
+    { "kPRV3",      {{kbAltPgUp},       kbLeftAlt} },
+    { "kRIT3",      {{kbAltRight},      kbLeftAlt} },
+    { "kUP3",       {{kbAltUp},         kbLeftAlt} },
+    { "kDN3",       {{kbAltDown},       kbLeftAlt} },
+    { "kDC4",       {{kbAltDel},        kbShift | kbLeftAlt} },
+    { "kEND4",      {{kbAltEnd},        kbShift | kbLeftAlt} },
+    { "kHOM4",      {{kbAltHome},       kbShift | kbLeftAlt} },
+    { "kIC4",       {{kbAltIns},        kbShift | kbLeftAlt} },
+    { "kLFT4",      {{kbAltLeft},       kbShift | kbLeftAlt} },
+    { "kNXT4",      {{kbAltPgDn},       kbShift | kbLeftAlt} },
+    { "kPRV4",      {{kbAltPgUp},       kbShift | kbLeftAlt} },
+    { "kRIT4",      {{kbAltRight},      kbShift | kbLeftAlt} },
+    { "kUP4",       {{kbAltUp},         kbShift | kbLeftAlt} },
+    { "kDN4",       {{kbAltDown},       kbShift | kbLeftAlt} },
+    { "kDC5",       {{kbCtrlDel},       kbLeftCtrl} },
+    { "kEND5",      {{kbCtrlEnd},       kbLeftCtrl} },
+    { "kHOM5",      {{kbCtrlHome},      kbLeftCtrl} },
+    { "kIC5",       {{kbCtrlIns},       kbLeftCtrl} },
+    { "kLFT5",      {{kbCtrlLeft},      kbLeftCtrl} },
+    { "kNXT5",      {{kbCtrlPgDn},      kbLeftCtrl} },
+    { "kPRV5",      {{kbCtrlPgUp},      kbLeftCtrl} },
+    { "kRIT5",      {{kbCtrlRight},     kbLeftCtrl} },
+    { "kUP5",       {{kbCtrlUp},        kbLeftCtrl} },
+    { "kDN5",       {{kbCtrlDown},      kbLeftCtrl} },
+    { "kDC6",       {{kbCtrlDel},       kbLeftCtrl | kbShift} },
+    { "kEND6",      {{kbCtrlEnd},       kbLeftCtrl | kbShift} },
+    { "kHOM6",      {{kbCtrlHome},      kbLeftCtrl | kbShift} },
+    { "kIC6",       {{kbCtrlIns},       kbLeftCtrl | kbShift} },
+    { "kLFT6",      {{kbCtrlLeft},      kbLeftCtrl | kbShift} },
+    { "kNXT6",      {{kbCtrlPgDn},      kbLeftCtrl | kbShift} },
+    { "kPRV6",      {{kbCtrlPgUp},      kbLeftCtrl | kbShift} },
+    { "kRIT6",      {{kbCtrlRight},     kbLeftCtrl | kbShift} },
+    { "kUP6",       {{kbCtrlUp},        kbLeftCtrl | kbShift} },
+    { "kDN6",       {{kbCtrlDown},      kbLeftCtrl | kbShift} },
+    { "kDC7",       {{kbAltDel},        kbLeftCtrl | kbLeftAlt} }, // Please do not attempt this one
+    { "kEND7",      {{kbAltEnd},        kbLeftCtrl | kbLeftAlt} },
+    { "kHOM7",      {{kbAltHome},       kbLeftCtrl | kbLeftAlt} },
+    { "kIC7",       {{kbAltIns},        kbLeftCtrl | kbLeftAlt} },
+    { "kLFT7",      {{kbAltLeft},       kbLeftCtrl | kbLeftAlt} },
+    { "kNXT7",      {{kbAltPgDn},       kbLeftCtrl | kbLeftAlt} },
+    { "kPRV7",      {{kbAltPgUp},       kbLeftCtrl | kbLeftAlt} },
+    { "kRIT7",      {{kbAltRight},      kbLeftCtrl | kbLeftAlt} },
+    { "kUP7",       {{kbAltUp},         kbLeftCtrl | kbLeftAlt} },
+    { "kDN7",       {{kbAltDown},       kbLeftCtrl | kbLeftAlt} },
+    { "kpCMA",      {{'+'},             0, {'+'}, 1} },
+    { "kpADD",      {{'+'},             0, {'+'}, 1} },
+    { "kpSUB",      {{'-'},             0, {'-'}, 1} },
+    { "kpMUL",      {{'*'},             0, {'*'}, 1} },
+    { "kpDIV",      {{'/'},             0, {'/'}, 1} },
+    { "kpZRO",      {{'0'},             0, {'0'}, 1} },
+    { "kpDOT",      {{'.'},             0, {'.'}, 1} },
+    { "ka2",        {{kbUp},            0} },
+    { "kb1",        {{kbLeft},          0} },
+    { "kb3",        {{kbRight},         0} },
+    { "kc2",        {{kbDown},          0} },
 });
 
-NcursesInput::NcursesInput(const StdioCtl &aIo, NcursesDisplay &, bool mouse) noexcept :
+int NcursesInputGetter::get() noexcept
+{
+    int k = wgetch(stdscr);
+    if (pendingCount > 0)
+        --pendingCount;
+    return k != ERR ? k : -1;
+}
+
+void NcursesInputGetter::unget(int k) noexcept
+{
+    if (ungetch(k) != ERR)
+        ++pendingCount;
+}
+
+NcursesInput::NcursesInput( StdioCtl &aIo, NcursesDisplay &,
+                            InputState &aState, bool mouse ) noexcept :
     InputStrategy(aIo.in()),
     io(aIo),
-    mstate({}),
-    buttonCount(0),
+    state(aState),
     mouseEnabled(mouse)
 {
     // Capture all keyboard input.
@@ -264,7 +287,7 @@ NcursesInput::NcursesInput(const StdioCtl &aIo, NcursesDisplay &, bool mouse) no
     // Make getch practically non-blocking. Some terminals may feed input slowly.
     // Note that we only risk blocking when reading multibyte characters
     // or parsing escape sequences.
-    wtimeout(stdscr, readTimeout);
+    wtimeout(stdscr, readTimeoutMs);
     /* Do not delay too much on ESC key presses, as the Alt modifier works well
      * in most modern terminals. Still, this delay helps ncurses distinguish
      * special key sequences, I believe. */
@@ -272,13 +295,7 @@ NcursesInput::NcursesInput(const StdioCtl &aIo, NcursesDisplay &, bool mouse) no
 
     TermIO::keyModsOn(io);
     if (mouseEnabled)
-    {
-        mstate.where = {-1, -1};
-        // The button count is not really important. Turbo Vision only checks
-        // whether it is non-zero.
-        buttonCount = 2;
         TermIO::mouseOn(io);
-    }
 }
 
 NcursesInput::~NcursesInput()
@@ -286,63 +303,45 @@ NcursesInput::~NcursesInput()
     if (mouseEnabled)
         TermIO::mouseOff(io);
     TermIO::keyModsOff(io);
+    TermIO::consumeUnprocessedInput(io, in, state);
 }
 
 int NcursesInput::getButtonCount() noexcept
 {
-    return buttonCount;
+    // The exact button count is not really important. Turbo Vision
+    // only checks whether it is non-zero.
+    return mouseEnabled ? 2 : 0;
 }
 
-int NcursesInput::getch_nb() noexcept
+int NcursesInput::getChNb() noexcept
 {
     wtimeout(stdscr, 0);
-    int k = wgetch(stdscr);
-    wtimeout(stdscr, readTimeout);
+    int k = in.get();
+    wtimeout(stdscr, readTimeoutMs);
     return k;
-}
-
-int NcursesInput::NcGetChBuf::do_getch() noexcept
-{
-    int k = wgetch(stdscr);
-    return k != ERR ? k : -1;
-}
-
-bool NcursesInput::NcGetChBuf::do_ungetch(int k) noexcept
-{
-    return ungetch(k) != ERR;
 }
 
 bool NcursesInput::hasPendingEvents() noexcept
 {
-    int k = getch_nb();
-    if (k != ERR)
-    {
-        ungetch(k);
-        return true;
-    }
-    return false;
+    return in.pendingCount > 0;
 }
 
 bool NcursesInput::getEvent(TEvent &ev) noexcept
 {
-    int k = wgetch(stdscr);
+    GetChBuf buf(in);
+    switch (TermIO::parseEvent(buf, ev, state))
+    {
+        case Rejected: buf.reject(); break;
+        case Accepted: return true;
+        case Ignored: return false;
+    }
+
+    int k = in.get();
 
     if (k == KEY_RESIZE)
-        return false; // Should be handled elsewhere.
-
-    if (k == KEY_MOUSE)
+        return false; // Handled by SigwinchHandler.
+    else if (k == KEY_MOUSE)
         return parseCursesMouse(ev);
-    else if (k == KEY_ESC)
-    {
-        // Try to parse a escape sequence.
-        NcGetChBuf buf;
-        switch (TermIO::parseEscapeSeq(buf, ev, mstate))
-        {
-            case Rejected: break;
-            case Accepted: return true;
-            case Ignored: return false;
-        }
-    }
 
     if (k != ERR)
     {
@@ -370,7 +369,12 @@ bool NcursesInput::getEvent(TEvent &ev) noexcept
             parsePrintableChar(ev, keys, num_keys);
 
         if (Alt)
-            TermIO::setAltModifier(ev.keyDown);
+        {
+            ev.keyDown.controlKeyState |= kbAltShift;
+            TermIO::normalizeKey(ev.keyDown);
+        }
+        if (state.bracketedPaste)
+            ev.keyDown.controlKeyState |= kbPaste;
 
         return ev.keyDown.keyCode != kbNoKey || ev.keyDown.textLength;
     }
@@ -383,7 +387,7 @@ void NcursesInput::detectAlt(int keys[4], bool &Alt) noexcept
  * we check if another character has been received. If it has, we consider this
  * an Alt+Key combination. Of course, many other things sent by the terminal
  * begin with ESC, but ncurses already identifies most of them. */
-    int k = getch_nb();
+    int k = getChNb();
     if (k != ERR)
     {
         keys[0] = k;
@@ -412,7 +416,7 @@ void NcursesInput::readUtf8Char(int keys[4], int &num_keys) noexcept
  * have to predict the number of bytes it is composed of, then read as many. */
     num_keys += Utf8BytesLeft((char) keys[0]);
     for (int i = 1; i < num_keys; ++i)
-        if ( ERR == (keys[i] = wgetch(stdscr)) )
+        if ((keys[i] = in.get()) == -1)
         {
             num_keys = i;
             break;
@@ -424,32 +428,33 @@ bool NcursesInput::parseCursesMouse(TEvent &ev) noexcept
     MEVENT mevent;
     if (getmouse(&mevent) == OK)
     {
-        MouseState newm = {};
-        newm.where = {mevent.x, mevent.y};
-        newm.buttons = mstate.buttons;
+        ev.what = evMouse;
+        ev.mouse = {};
+        ev.mouse.where = {mevent.x, mevent.y};
         if (mevent.bstate & BUTTON1_PRESSED)
-            newm.buttons |= mbLeftButton;
+            state.buttons |= mbLeftButton;
         if (mevent.bstate & BUTTON1_RELEASED)
-            newm.buttons &= ~mbLeftButton;
+            state.buttons &= ~mbLeftButton;
         if (mevent.bstate & BUTTON2_PRESSED)
-            newm.buttons |= mbMiddleButton;
+            state.buttons |= mbMiddleButton;
         if (mevent.bstate & BUTTON2_RELEASED)
-            newm.buttons &= ~mbMiddleButton;
+            state.buttons &= ~mbMiddleButton;
         if (mevent.bstate & BUTTON3_PRESSED)
-            newm.buttons |= mbRightButton;
+            state.buttons |= mbRightButton;
         if (mevent.bstate & BUTTON3_RELEASED)
-            newm.buttons &= ~mbRightButton;
+            state.buttons &= ~mbRightButton;
+        ev.mouse.buttons = state.buttons;
 
 #if NCURSES_MOUSE_VERSION > 1
         // Mouse wheel support was added in Ncurses v6. Before that, only
         // scroll up would work. It's better not to support wheel scrolling
         // in that case.
         if (mevent.bstate & BUTTON4_PRESSED)
-            newm.wheel = mwUp;
+            ev.mouse.wheel = mwUp;
         else if (mevent.bstate & BUTTON5_PRESSED)
-            newm.wheel = mwDown;
+            ev.mouse.wheel = mwDown;
 #endif
-        return TermIO::acceptMouseEvent(ev, mstate, newm);
+        return true;
     }
     else
     {
@@ -460,8 +465,8 @@ bool NcursesInput::parseCursesMouse(TEvent &ev) noexcept
         for (auto &parseMouse : {TermIO::parseSGRMouse,
                                  TermIO::parseX10Mouse})
         {
-            NcGetChBuf buf;
-            switch (parseMouse(buf, ev, mstate))
+            GetChBuf buf(in);
+            switch (parseMouse(buf, ev, state))
             {
                 case Rejected: buf.reject(); break;
                 case Accepted: return true;
@@ -471,5 +476,7 @@ bool NcursesInput::parseCursesMouse(TEvent &ev) noexcept
         return false;
     }
 }
+
+} // namespace tvision
 
 #endif // HAVE_NCURSES

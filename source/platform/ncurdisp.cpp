@@ -9,7 +9,10 @@
 #include <stdlib.h>
 #include <ncurses.h>
 
-NcursesDisplay::NcursesDisplay(const StdioCtl &aIo) noexcept :
+namespace tvision
+{
+
+NcursesDisplay::NcursesDisplay(StdioCtl &aIo) noexcept :
     TerminalDisplay(aIo),
     definedPairs(0),
     usesNcursesDraw(false)
@@ -163,5 +166,7 @@ uint NcursesDisplay::getColorPair(uchar pairKey) noexcept
     }
     return COLOR_PAIR(id);
 }
+
+} // namespace tvision
 
 #endif // HAVE_NCURSES

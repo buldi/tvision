@@ -1,7 +1,7 @@
 #define Uses_TScreenCell
 #include <tvision/tv.h>
 
-#include <internal/buffdisp.h>
+#include <internal/dispbuff.h>
 #include <internal/platform.h>
 #include <internal/codepage.h>
 #include <internal/getenv.h>
@@ -14,9 +14,12 @@ using std::chrono::steady_clock;
 #define __builtin_expect(x, y) x
 #endif
 
-BufferedDisplay *BufferedDisplay::instance = 0;
+namespace tvision
+{
 
-BufferedDisplay::BufferedDisplay() noexcept :
+DisplayBuffer *DisplayBuffer::instance = 0;
+
+DisplayBuffer::DisplayBuffer() noexcept :
     // This could be checked at runtime, but for now this is as much as I know.
 #ifdef _WIN32
     wideOverlapping(false)
@@ -32,12 +35,12 @@ BufferedDisplay::BufferedDisplay() noexcept :
         flushDelay = microseconds((int) 1e6/fps);
 }
 
-BufferedDisplay::~BufferedDisplay()
+DisplayBuffer::~DisplayBuffer()
 {
     instance = 0;
 }
 
-TScreenCell *BufferedDisplay::reloadScreenInfo(DisplayStrategy &display) noexcept
+TScreenCell *DisplayBuffer::reloadScreenInfo(DisplayStrategy &display) noexcept
 {
     display.reloadScreenInfo();
     size = display.getScreenSize();
@@ -46,7 +49,7 @@ TScreenCell *BufferedDisplay::reloadScreenInfo(DisplayStrategy &display) noexcep
     return buffer.data();
 }
 
-void BufferedDisplay::resizeBuffer() noexcept
+void DisplayBuffer::resizeBuffer() noexcept
 {
     for (auto *buf : {&buffer, &flushBuffer})
     {
@@ -58,25 +61,35 @@ void BufferedDisplay::resizeBuffer() noexcept
     rowDamage.resize(size.y, {INT_MAX, INT_MIN});
 }
 
-void BufferedDisplay::clearScreen(DisplayStrategy &display) noexcept
+void DisplayBuffer::clearScreen(DisplayStrategy &display) noexcept
 {
     display.clearScreen();
     display.lowlevelFlush();
     resizeBuffer();
 }
 
-void BufferedDisplay::setCaretSize(int size) noexcept
+void DisplayBuffer::redrawScreen(DisplayStrategy &display) noexcept
+{
+    screenTouched = true;
+    lastFlush = {};
+    memset(&flushBuffer[0], 0, flushBuffer.size()*sizeof(TScreenCell));
+    for (auto &range : rowDamage)
+        range = {0, size.x - 1};
+    flushScreen(display);
+}
+
+void DisplayBuffer::setCaretSize(int size) noexcept
 {
     newCaretSize = size;
 }
 
-void BufferedDisplay::setCaretPosition(int x, int y) noexcept
+void DisplayBuffer::setCaretPosition(int x, int y) noexcept
 {
     caretPosition = {x, y};
     caretMoved = true;
 }
 
-void BufferedDisplay::screenWrite(int x, int y, TScreenCell *buf, int len) noexcept
+void DisplayBuffer::screenWrite(int x, int y, TScreenCell *buf, int len) noexcept
 {
     if (inBounds(x, y) && len)
     {
@@ -91,7 +104,7 @@ void BufferedDisplay::screenWrite(int x, int y, TScreenCell *buf, int len) noexc
     }
 }
 
-void BufferedDisplay::setDirty(int x, int y, int len) noexcept
+void DisplayBuffer::setDirty(int x, int y, int len) noexcept
 {
     Range dam = rowDamage[y];
     if (x < dam.begin)
@@ -101,7 +114,7 @@ void BufferedDisplay::setDirty(int x, int y, int len) noexcept
     rowDamage[y] = dam;
 }
 
-bool BufferedDisplay::timeToFlush() noexcept
+bool DisplayBuffer::timeToFlush() noexcept
 {
     // Avoid flushing faster than the maximum FPS.
     if (limitFPS)
@@ -115,7 +128,7 @@ bool BufferedDisplay::timeToFlush() noexcept
     return true;
 }
 
-void BufferedDisplay::drawCursors() noexcept
+void DisplayBuffer::drawCursors() noexcept
 {
     for (auto* cursor : cursors)
         if (cursor->isVisible())
@@ -134,7 +147,7 @@ void BufferedDisplay::drawCursors() noexcept
         }
 }
 
-void BufferedDisplay::undrawCursors() noexcept
+void DisplayBuffer::undrawCursors() noexcept
 {
     for (const auto* cursor : cursors)
         if (cursor->isVisible())
@@ -153,22 +166,18 @@ void BufferedDisplay::undrawCursors() noexcept
         }
 }
 
-bool BufferedDisplay::needsFlush() const noexcept
+bool DisplayBuffer::needsFlush() const noexcept
 {
     return screenTouched || caretMoved || caretSize != newCaretSize;
 }
 
-namespace buffdisp {
-namespace {
-
-void flushScreenAlgorithm(BufferedDisplay &, DisplayStrategy &) noexcept;
-
-}
-}
-
-void BufferedDisplay::flushScreen(DisplayStrategy &display) noexcept
+namespace
 {
-    using namespace buffdisp;
+void flushScreenAlgorithm(DisplayBuffer &, DisplayStrategy &) noexcept;
+}
+
+void DisplayBuffer::flushScreen(DisplayStrategy &display) noexcept
+{
     if (needsFlush() && timeToFlush())
     {
         drawCursors();
@@ -185,7 +194,7 @@ void BufferedDisplay::flushScreen(DisplayStrategy &display) noexcept
     }
 }
 
-inline void BufferedDisplay::validateCell(TScreenCell &cell) const noexcept
+inline void DisplayBuffer::validateCell(TScreenCell &cell) const noexcept
 {
     auto &ch = cell._ch;
     if (!ch[1]) // size 1
@@ -195,25 +204,25 @@ inline void BufferedDisplay::validateCell(TScreenCell &cell) const noexcept
             ch[0] = ' ';
         else if (c < ' ' || 0x7F <= c)
             // Translate from codepage as fallback.
-            ch.moveInt(CpTranslator::toUtf8Int(c));
+            ch.moveInt(CpTranslator::toPackedUtf8(c));
     }
 }
 
 //////////////////////////////////////////////////////////////////////////
 // FlushScreenAlgorithm
 
-namespace buffdisp {
-namespace {
+namespace
+{
 
 struct FlushScreenAlgorithm
 {
-    BufferedDisplay &disp;
+    DisplayBuffer &disp;
     DisplayStrategy &display;
     TPoint size;
     TPoint last;
     int x, y, rowOffs;
     TScreenCell *cell;
-    BufferedDisplay::Range damage;
+    DisplayBuffer::Range damage;
 
     const TScreenCell &cellAt(int x) const noexcept;
     void getCell() noexcept;
@@ -266,7 +275,7 @@ inline bool FlushScreenAlgorithm::wideCanOverlap() const noexcept
     return disp.wideOverlapping;
 }
 
-inline void flushScreenAlgorithm(BufferedDisplay &disp, DisplayStrategy &display) noexcept
+inline void flushScreenAlgorithm(DisplayBuffer &disp, DisplayStrategy &display) noexcept
 {
     FlushScreenAlgorithm {disp, display}.run();
 }
@@ -445,4 +454,5 @@ void FlushScreenAlgorithm::handleTrail() noexcept
 }
 
 } // namespace
-} // namespace buffdisp
+
+} // namespace tvision

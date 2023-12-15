@@ -3,6 +3,7 @@
 
 #include <internal/codepage.h>
 #include <internal/platform.h>
+#include <internal/unixcon.h>
 #include <internal/linuxcon.h>
 #include <internal/win32con.h>
 #include <internal/winwidth.h>
@@ -104,6 +105,7 @@ struct mbstat_r { int length; int width; };
 static mbstat_r mbstat(TStringView text) noexcept
 // Pre: 'text.size() > 0'.
 {
+    using namespace tvision;
     uint32_t wc;
     int length = mbtowc(wc, text);
     int width = 1;
@@ -114,6 +116,8 @@ static mbstat_r mbstat(TStringView text) noexcept
 
 } // namespace ttext
 
+namespace tvision
+{
 
 #ifdef _TV_UNIX
 int UnixConsoleStrategy::charWidth(uint32_t wc) noexcept
@@ -152,6 +156,8 @@ int Win32ConsoleStrategy::charWidth(uint32_t wc) noexcept
     return WinWidth::width(wc);
 }
 #endif // _WIN32
+
+} // namespace tvision
 
 size_t TText::width(TStringView text) noexcept
 {
@@ -200,6 +206,7 @@ TText::Lw TText::nextImpl(TStringView text) noexcept
 
 TText::Lw TText::nextImpl(TSpan<const uint32_t> text) noexcept
 {
+    using namespace tvision;
     if (text.size())
     {
         int width = Platform::charWidth(text[0]);
@@ -227,6 +234,17 @@ size_t TText::prev(TStringView text, size_t index) noexcept
         return 1;
     }
     return 0;
+}
+
+char TText::toCodePage(TStringView text) noexcept
+{
+    using namespace tvision;
+    size_t length = TText::next(text);
+    if (length == 0)
+        return '\0';
+    if (length == 1 && (text[0] < ' ' || '\x7F' <= text[0]))
+        return text[0];
+    return CpTranslator::fromUtf8(text.substr(0, length));
 }
 
 template <class Text>
@@ -280,6 +298,7 @@ static inline bool isZWJ(TStringView mbc)
 TText::Lw TText::drawOneImpl( TSpan<TScreenCell> cells, size_t i,
                               TStringView text, size_t j ) noexcept
 {
+    using namespace tvision;
     using namespace ttext;
     if (j < text.size())
     {
@@ -288,12 +307,12 @@ TText::Lw TText::drawOneImpl( TSpan<TScreenCell> cells, size_t i,
         {
             if (i < cells.size())
             {
-                if (mb.length < 0)
-                    // This would be unnecessary if it wasn't because we
-                    // might later try to append combining characters to this.
-                    cells[i]._ch.moveInt(CpTranslator::toUtf8Int(text[j]));
-                else if (text[j] == '\0')
+                // We need to convert control characters here since we
+                // might later try to append combining characters to this.
+                if (text[j] == '\0')
                     cells[i]._ch.moveChar(' ');
+                else if (text[j] < ' ' || '\x7F' <= text[j])
+                    cells[i]._ch.moveInt(CpTranslator::toPackedUtf8(text[j]));
                 else
                     cells[i]._ch.moveChar(text[j]);
                 return {1, 1};
@@ -341,6 +360,7 @@ TText::Lw TText::drawOneImpl( TSpan<TScreenCell> cells, size_t i,
 TText::Lw TText::drawOneImpl( TSpan<TScreenCell> cells, size_t i,
                               TSpan<const uint32_t> textU32, size_t j ) noexcept
 {
+    using namespace tvision;
     using namespace ttext;
     if (j < textU32.size())
     {
@@ -372,7 +392,10 @@ TText::Lw TText::drawOneImpl( TSpan<TScreenCell> cells, size_t i,
             if (i < cells.size())
             {
                 bool wide = width > 1;
-                cells[i]._ch.moveStr(textU8, wide);
+                if (textU32[j] == '\0')
+                    cells[i]._ch.moveChar(' ');
+                else
+                    cells[i]._ch.moveStr(textU8, wide);
                 bool drawTrail = (wide && i + 1 < cells.size());
                 if (drawTrail)
                     cells[i + 1]._ch.moveWideCharTrail();

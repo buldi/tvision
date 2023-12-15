@@ -1,5 +1,5 @@
-#ifndef BUFFDISP_H
-#define BUFFDISP_H
+#ifndef TVISION_DISPBUFF_H
+#define TVISION_DISPBUFF_H
 
 #define Uses_TPoint
 #include <tvision/tv.h>
@@ -7,21 +7,20 @@
 #include <vector>
 #include <chrono>
 
+namespace tvision
+{
+
 class ScreenCursor;
 class DisplayStrategy;
 
-namespace buffdisp {
-namespace {
-
-struct FlushScreenAlgorithm;
-
-}
-}
-
-
-class BufferedDisplay
+namespace
 {
-    friend buffdisp::FlushScreenAlgorithm;
+struct FlushScreenAlgorithm;
+}
+
+class DisplayBuffer
+{
+    friend FlushScreenAlgorithm;
 
     struct Range {
         int begin, end;
@@ -40,7 +39,7 @@ class BufferedDisplay
     std::chrono::microseconds flushDelay {};
     std::chrono::time_point<std::chrono::steady_clock> lastFlush {};
 
-    static BufferedDisplay *instance;
+    static DisplayBuffer *instance;
 #ifdef _WIN32
     static constexpr int defaultFPS = 120; // Just 60 feels notably slower on Windows, I don't know why.
 #else
@@ -65,13 +64,14 @@ public:
     TPoint size {};
     int caretSize {};
 
-    BufferedDisplay() noexcept;
-    ~BufferedDisplay();
+    DisplayBuffer() noexcept;
+    ~DisplayBuffer();
 
     void setCaretSize(int size) noexcept;
     void setCaretPosition(int x, int y) noexcept;
     void screenWrite(int x, int y, TScreenCell *buf, int len) noexcept;
     void clearScreen(DisplayStrategy &) noexcept;
+    void redrawScreen(DisplayStrategy &) noexcept;
     void flushScreen(DisplayStrategy &) noexcept;
     TScreenCell *reloadScreenInfo(DisplayStrategy &) noexcept;
 
@@ -80,13 +80,13 @@ public:
     static void changeCursor() noexcept;
 };
 
-inline bool BufferedDisplay::inBounds(int x, int y) const noexcept
+inline bool DisplayBuffer::inBounds(int x, int y) const noexcept
 {
     return 0 <= x && x < size.x &&
            0 <= y && y < size.y;
 }
 
-inline void BufferedDisplay::addCursor(ScreenCursor *cursor) noexcept
+inline void DisplayBuffer::addCursor(ScreenCursor *cursor) noexcept
 {
     auto &cursors = instance->cursors;
     for (auto it = cursors.begin(); it != cursors.end(); ++it)
@@ -95,7 +95,7 @@ inline void BufferedDisplay::addCursor(ScreenCursor *cursor) noexcept
     cursors.push_back(cursor);
 }
 
-inline void BufferedDisplay::removeCursor(ScreenCursor *cursor) noexcept
+inline void DisplayBuffer::removeCursor(ScreenCursor *cursor) noexcept
 {
     changeCursor();
     auto &cursors = instance->cursors;
@@ -104,9 +104,11 @@ inline void BufferedDisplay::removeCursor(ScreenCursor *cursor) noexcept
             return (void) cursors.erase(it);
 }
 
-inline void BufferedDisplay::changeCursor() noexcept
+inline void DisplayBuffer::changeCursor() noexcept
 {
     instance->caretMoved = true;
 }
 
-#endif
+} // namespace tvision
+
+#endif // TVISION_DISPBUFF_H

@@ -14,7 +14,9 @@
  *
  */
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo-
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po-
 #endif
@@ -33,13 +35,13 @@ public:
 
     void moveChar( ushort indent, char c, TColorAttr attr, ushort count ) noexcept;
     ushort moveStr( ushort indent, TStringView str, TColorAttr attr ) noexcept;
-    ushort moveStr( ushort indent, TStringView str, TColorAttr attr, ushort width, ushort begin=0 ) noexcept;
+    ushort moveStr( ushort indent, TStringView str, TColorAttr attr, ushort width, ushort begin = 0 ) noexcept;
     ushort moveCStr( ushort indent, TStringView str, TAttrPair attrs ) noexcept;
+    ushort moveCStr( ushort indent, TStringView str, TAttrPair attrs, ushort width, ushort begin = 0 ) noexcept;
     void moveBuf( ushort indent, const void _FAR *source, TColorAttr attr, ushort count ) noexcept;
 
     void putAttribute( ushort indent, TColorAttr attr ) noexcept;
     void putChar( ushort indent, uchar c ) noexcept;
-    size_t length() const noexcept;
 
 #ifdef __FLAT__
     TDrawBuffer() noexcept;
@@ -49,12 +51,12 @@ public:
 protected:
 
 #ifdef __FLAT__
-    static TSpan<TScreenCell> allocData() noexcept;
-
     const TSpan<TScreenCell> data;
 #else
     TScreenCell data[maxViewWidth];
 #endif
+
+    size_t length() const noexcept;
 
 };
 
@@ -84,8 +86,9 @@ inline size_t TDrawBuffer::length() const noexcept
 
 #endif  // Uses_TDrawBuffer
 
+#if defined( __BORLANDC__ )
 #pragma option -Vo.
+#endif
 #if defined( __BCOPT__ ) && !defined (__FLAT__)
 #pragma option -po.
 #endif
-
