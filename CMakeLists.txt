@@ -109,9 +109,11 @@ function(tv_set_warnings target)
     else()
         target_compile_options(${target} PRIVATE
             -Wall
+            -Wextra
             -Wno-deprecated
             -Wno-unknown-pragmas
             -Wno-pragmas
+            -Wno-missing-field-initializers
         )
     endif()
 endfunction()
@@ -148,6 +150,8 @@ endif()
 option(TV_OPTIMIZE_BUILD "Use CMake's Precompiled Headers" ON)
 
 option(TV_BUILD_AVSCOLOR "Build AviSynth TermColor plugin" OFF)
+
+include(GNUInstallDirs)
 
 tv_message_mp(STATUS "Install path: ${CMAKE_INSTALL_PREFIX}")
 tv_message(STATUS "Build Examples: ${TV_BUILD_EXAMPLES}")
