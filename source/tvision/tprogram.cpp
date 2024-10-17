@@ -35,7 +35,7 @@ TMenuBar * _NEAR TProgram::menuBar = 0;
 TDeskTop * _NEAR TProgram::deskTop = 0;
 TProgram * _NEAR TProgram::application = 0;
 int _NEAR TProgram::appPalette = apColor;
-int _NEAR TProgram::eventTimeout = 20; // 50 wake-ups per second.
+int _NEAR TProgram::eventTimeoutMs = 20; // 50 wake-ups per second.
 TEvent _NEAR TProgram::pending;
 TTimerQueue _NEAR TProgram::timerQueue;
 
@@ -100,10 +100,10 @@ Boolean TProgram::canMoveFocus()
 
 int TProgram::eventWaitTimeout()
 {
-    int timerTimeout = min(timerQueue.timeUntilTimeout(), (int32_t) INT_MAX);
-    if (timerTimeout < 0)
-        return eventTimeout;
-    return min(eventTimeout, timerTimeout);
+    int timerTimeoutMs = min(timerQueue.timeUntilNextTimeout(), (int32_t) INT_MAX);
+    if (timerTimeoutMs < 0)
+        return eventTimeoutMs;
+    return min(eventTimeoutMs, timerTimeoutMs);
 }
 
 ushort TProgram::executeDialog( TDialog* pD, void* data )
@@ -138,7 +138,7 @@ void TProgram::getEvent(TEvent& event)
         }
     else
         {
-        event.waitForEvent(eventWaitTimeout());
+        TEventQueue::waitForEvents(eventWaitTimeout());
         event.getMouseEvent();
         if( event.what == evNothing )
             {
@@ -207,9 +207,9 @@ void TProgram::handleEvent( TEvent& event )
         }
 }
 
-static void doHandleTimeout( TTimerId id, void *self )
+static void handleTimeout( TTimerId id, void *self )
 {
-    message( (TProgram *) self, evBroadcast, cmTimeout, id );
+    message( (TProgram *) self, evBroadcast, cmTimerExpired, id );
 }
 
 void TProgram::idle()
@@ -223,7 +223,7 @@ void TProgram::idle()
         commandSetChanged = False;
         }
 
-    timerQueue.collectTimeouts(doHandleTimeout, this);
+    timerQueue.collectExpiredTimers( handleTimeout, this );
 }
 
 TDeskTop *TProgram::initDeskTop( TRect r )

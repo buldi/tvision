@@ -92,10 +92,10 @@ protected:
     THWMouse() noexcept;
     THWMouse( const THWMouse& ) noexcept {};
     ~THWMouse();
-public:
+
     static void show() noexcept;
     static void hide() noexcept;
-protected:
+
     static void setRange( ushort, ushort ) noexcept;
     static void getEvent( MouseEventType& ) noexcept;
     static Boolean present() noexcept;
@@ -206,7 +206,7 @@ struct KeyDownEvent
         CharScanType charScan;
         };
     ushort controlKeyState;
-    char text[4];               // NOT null-terminated.
+    char text[maxCharSize];     // NOT null-terminated.
     uchar textLength;
 
     TStringView getText() const;
@@ -259,8 +259,6 @@ struct TEvent
 
     void getMouseEvent() noexcept;
     void getKeyEvent() noexcept;
-    static void waitForEvent(int timeoutMs) noexcept;
-    static void putNothing() noexcept;
 };
 
 #endif  // Uses_TEvent
@@ -278,16 +276,16 @@ public:
     static void getKeyEvent( TEvent& ) noexcept;
     static void suspend() noexcept;
     static void resume() noexcept;
-    static void waitForEvent( int ) noexcept;
+    static void waitForEvents( int timeoutMs ) noexcept;
+    static void wakeUp() noexcept;
 
     friend class TView;
-    friend class TProgram;
     friend void genRefs();
 
     static ushort _NEAR doubleDelay;
     static Boolean _NEAR mouseReverse;
 
-    static void putPaste( TStringView ) noexcept;
+    static void setPasteText( TStringView ) noexcept;
 
 private:
 
@@ -306,9 +304,8 @@ private:
 #endif
 
     static MouseEventType _NEAR lastMouse;
-public:
     static MouseEventType _NEAR curMouse;
-private:
+
     static MouseEventType _NEAR downMouse;
     static ushort _NEAR downTicks;
 
@@ -316,9 +313,7 @@ private:
     static TEvent _NEAR eventQueue[ eventQSize ];
     static TEvent * _NEAR eventQHead;
     static TEvent * _NEAR eventQTail;
-public:
     static Boolean _NEAR mouseIntFlag;
-private:
     static ushort _NEAR eventCount;
 #endif
 
@@ -333,10 +328,10 @@ private:
     static size_t _NEAR pasteTextLength;
     static size_t _NEAR pasteTextIndex;
 
-    static TEvent _NEAR keyEventQueue[ keyEventQSize ];
+    static TEvent _NEAR keyEventQueue[ minPasteEventCount ];
     static size_t _NEAR keyEventCount;
     static size_t _NEAR keyEventIndex;
-    static Boolean _NEAR keyPasteState;
+    static Boolean _NEAR pasteState;
 };
 
 inline void TEvent::getMouseEvent() noexcept
@@ -367,8 +362,8 @@ public:
 
     TTimerId setTimer(uint32_t timeoutMs, int32_t periodMs = -1);
     void killTimer(TTimerId id);
-    void collectTimeouts(void (&func)(TTimerId, void *), void *args);
-    int32_t timeUntilTimeout();
+    void collectExpiredTimers(void (&func)(TTimerId, void *), void *args);
+    int32_t timeUntilNextTimeout();
 
 private:
 

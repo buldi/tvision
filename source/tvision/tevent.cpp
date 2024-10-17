@@ -61,10 +61,10 @@ char * _FAR TEventQueue::pasteText = 0;
 size_t _NEAR TEventQueue::pasteTextLength = 0;
 size_t _NEAR TEventQueue::pasteTextIndex = 0;
 
-TEvent _NEAR TEventQueue::keyEventQueue[ keyEventQSize ] = { {0} };
+TEvent _NEAR TEventQueue::keyEventQueue[ minPasteEventCount ] = { {0} };
 size_t _NEAR TEventQueue::keyEventCount = 0;
 size_t _NEAR TEventQueue::keyEventIndex = 0;
-Boolean _NEAR TEventQueue::keyPasteState = False;
+Boolean _NEAR TEventQueue::pasteState = False;
 
 TEventQueue::TEventQueue() noexcept
 {
@@ -291,15 +291,21 @@ I   POP DS
 
 void TEventQueue::getKeyEvent( TEvent &ev ) noexcept
 {
-    static TEvent pendingKey = {0};
-    if( pendingKey.what != evNothing )
-        {
-        ev = pendingKey;
-        pendingKey.what = evNothing;
-        return;
-        }
+    static Boolean shouldSkipLf = False;
 
     getKeyOrPasteEvent( ev );
+
+    if( shouldSkipLf )
+        {
+        shouldSkipLf = False;
+        // Skip a LF, since we had previously read a CR.
+        if( ev.what == evKeyDown && (ev.keyDown.controlKeyState & kbPaste) != 0 &&
+            ( (ev.keyDown.textLength == 0 && ev.keyDown.charScan.charCode == '\n') ||
+              (ev.keyDown.textLength == 1 && ev.keyDown.text[0] == '\n')
+            )
+          )
+            getKeyOrPasteEvent( ev );
+        }
 
     if( ev.what == evKeyDown && (ev.keyDown.controlKeyState & kbPaste) != 0 )
         {
@@ -308,27 +314,17 @@ void TEventQueue::getKeyEvent( TEvent &ev ) noexcept
             ev.keyDown.text[0] = (char) ev.keyDown.charScan.charCode;
             ev.keyDown.textLength = 1;
             }
-        if( ev.keyDown.text[0] == '\r' ) // Convert CR and CRLF into LF.
+        // Convert CR and CRLF into LF.
+        if( ev.keyDown.text[0] == '\r' )
             {
             ev.keyDown.text[0] = '\n';
-
-            TEvent next;
-            getKeyOrPasteEvent( next );
-
-            if( next.what == evKeyDown &&
-                (next.keyDown.controlKeyState & kbPaste) != 0 &&
-                next.keyDown.textLength == 1 &&
-                next.keyDown.text[0] == '\n'
-              )
-                ; // Drop event.
-            else
-                pendingKey = next;
+            shouldSkipLf = True;
             }
         ev.keyDown.keyCode = 0;
         }
 }
 
-void TEventQueue::putPaste( TStringView text ) noexcept
+void TEventQueue::setPasteText( TStringView text ) noexcept
 {
     delete[] pasteText;
     // Always initialize the paste event, even if it is empty, so that
@@ -377,8 +373,8 @@ void TEventQueue::getKeyOrPasteEvent( TEvent &ev ) noexcept
         return;
     if( keyEventCount == 0 )
         {
-        int firstNonText = keyEventQSize;
-        for( int i = 0; i < keyEventQSize; ++i )
+        int firstNonText = minPasteEventCount;
+        for( int i = 0; i < minPasteEventCount; ++i )
             {
             if( !readKeyPress( keyEventQueue[i] ) )
                 break;
@@ -391,13 +387,13 @@ void TEventQueue::getKeyOrPasteEvent( TEvent &ev ) noexcept
             }
         // If we receive at least X consecutive text events, then this is
         // the beginning of a paste event.
-        if( keyEventCount == keyEventQSize && firstNonText == keyEventQSize )
-            keyPasteState = True;
-        if( keyPasteState )
+        if( keyEventCount == minPasteEventCount && firstNonText == minPasteEventCount )
+            pasteState = True;
+        if( pasteState )
             for( int i = 0; i < min(keyEventCount, firstNonText); ++i )
                 keyEventQueue[i].keyDown.controlKeyState |= kbPaste;
-        if( keyEventCount < keyEventQSize || firstNonText < keyEventQSize )
-            keyPasteState = False;
+        if( keyEventCount < minPasteEventCount || firstNonText < minPasteEventCount )
+            pasteState = False;
         keyEventIndex = 0;
         }
     if( keyEventCount != 0 )
@@ -452,29 +448,24 @@ I   INT 16h;
     return Boolean( ev.what != evNothing );
 }
 
-void TEventQueue::waitForEvent(int timeoutMs) noexcept
+void TEventQueue::waitForEvents( int timeoutMs ) noexcept
 {
 #if defined( __FLAT__ )
-    if( !pasteText && keyEventCount == 0 )
-        THardwareInfo::waitForEvent(timeoutMs);
+    if( pasteText == 0 && keyEventCount == 0 )
+        THardwareInfo::waitForEvents( timeoutMs );
 #else
     (void) timeoutMs;
+#endif
+}
+
+void TEventQueue::wakeUp() noexcept
+{
+#if defined( __FLAT__ )
+    THardwareInfo::interruptEventWait();
 #endif
 }
 
 void TEvent::getKeyEvent() noexcept
 {
     TEventQueue::getKeyEvent( *this );
-}
-
-void TEvent::waitForEvent(int timeoutMs) noexcept
-{
-    TEventQueue::waitForEvent( timeoutMs );
-}
-
-void TEvent::putNothing() noexcept
-{
-#if defined( __FLAT__ )
-    THardwareInfo::interruptEventWait();
-#endif
 }

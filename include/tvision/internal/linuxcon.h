@@ -30,7 +30,9 @@ struct LinuxConsoleInput final : public EventSource
     bool getEvent(TEvent &ev) noexcept override;
     bool hasPendingEvents() noexcept override;
 
-    static ushort getKeyboardModifiers(StdioCtl &io) noexcept;
+    ushort getKeyboardModifiers() noexcept;
+
+    static ushort convertLinuxKeyModifiers(ushort linuxShiftState) noexcept;
 };
 
 class LinuxConsoleStrategy : public ConsoleStrategy
@@ -49,9 +51,10 @@ class LinuxConsoleStrategy : public ConsoleStrategy
 public:
 
     // Pre: 'io.isLinuxConsole()' returns 'true'.
-    // The lifetime of 'io' must exceed that of the returned object.
+    // The lifetime of 'io' and 'displayBuf' must exceed that of the returned object.
     // Takes ownership over 'inputState', 'display' and 'input'.
     static LinuxConsoleStrategy &create( StdioCtl &io,
+                                         DisplayBuffer &displayBuf,
                                          InputState &inputState,
                                          DisplayStrategy &display,
                                          InputStrategy &input ) noexcept;
